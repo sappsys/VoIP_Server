@@ -12,6 +12,8 @@ _No changes yet._
 
 ## [v0.1.3alpha] - 2026-07-02
 
+[Release](https://github.com/sappsys/VoIP_Server/releases/tag/v0.1.3alpha)
+
 ### Added
 
 - Configurable log level via `[logging] level` in `config.toml` (`debug`, `info`, `warn`, `error`)
