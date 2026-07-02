@@ -8,6 +8,8 @@ realm = "voip.local"
 moh_dir = "assets/moh"
 # SIP OPTIONS keepalive to registered phones (seconds). Default 30.
 options_keepalive_seconds = 30
+# SIP OPTIONS keepalive to trunks with keepalive=options (seconds). Default 30. Set 0 to disable.
+trunk_keepalive_seconds = 30
 # REGISTER expiry bounds (seconds).
 register_min_expiry = 60
 register_max_expiry = 3600
@@ -42,6 +44,17 @@ extensions_dir = "extensions"
 # The database-backed /phonebook/directory.xml is always available.
 phonebook_dir = "phonebook"
 
+# Voice prompts played to callers. Files are relative to `dir` (or absolute).
+# Leave a value empty ("") to disable that prompt and fall back to a SIP status.
+[sounds]
+dir = "assets/sounds"
+busy = "is-curntly-busy.wav"                 # recipient busy, no call waiting
+wrong_number = "you-dialed-wrong-number.wav" # invalid/unknown number dialed
+conf_pin = "confbridge-pin.wav"              # ask for conference PIN
+conf_pin_bad = "confbridge-pin-bad.wav"      # wrong PIN (then re-request)
+unavailable = "vm-nobodyavail.wav"           # extension unregistered/unavailable
+extension = "extension.wav"                  # prompt for extension (park retrieve)
+
 # Star codes (defaults shown; omit * in values if you prefer — it is added automatically)
 [features]
 redial = "*66"
@@ -66,4 +79,7 @@ role = "admin"
 # username = "trunkuser"
 # password = "trunkpass"
 # transport = "udp"
+# keepalive = "options"   # options (default), register (SIP REGISTER refresh), or off
+# keepalive_seconds = 30  # OPTIONS interval for NAT/liveness (per trunk)
+# register_expiry_seconds = 3600  # REGISTER Expires for re-registration (per trunk)
 # enabled = true

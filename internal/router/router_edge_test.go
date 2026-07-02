@@ -12,7 +12,7 @@ func TestRouteDialEdgeCases(t *testing.T) {
 		kind Kind
 		target string
 	}{
-		{"*88", KindPaging, "88"},
+		{"*88", KindParkRetrieve, ""},
 		{"*88102", KindParkRetrieve, "102"},
 		{"*73", KindPark, ""},
 		{"*99", KindPaging, "99"},
@@ -32,10 +32,13 @@ func TestRouteDialEdgeCases(t *testing.T) {
 	}
 }
 
-func TestRouteDialParkRetrieveRequiresSuffix(t *testing.T) {
+func TestRouteDialParkRetrieveBareCode(t *testing.T) {
 	fc := DefaultFeatureCodes()
-	r := RouteDial("*86", fc)
-	if r.Kind == KindParkRetrieve {
-		t.Fatal("*86 alone should not be park retrieve")
+	r := RouteDial(fc.ParkRetrieve, fc)
+	if r.Kind != KindParkRetrieve {
+		t.Fatalf("*86 alone should be park retrieve, got %v", r.Kind)
+	}
+	if r.Target != "" {
+		t.Fatalf("bare park retrieve target should be empty, got %q", r.Target)
 	}
 }

@@ -1,6 +1,7 @@
 package call
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -8,7 +9,26 @@ import (
 )
 
 // MOHTracks returns .wav files in dir sorted alphanumerically by filename.
+// If dir is empty, falls back to moh.wav in the parent directory (legacy layout).
 func MOHTracks(dir string) ([]string, error) {
+	tracks, err := wavFilesIn(dir)
+	if err != nil {
+		return nil, err
+	}
+	if len(tracks) > 0 {
+		return tracks, nil
+	}
+	parent := filepath.Dir(dir)
+	for _, name := range []string{"moh.wav", "hold.wav"} {
+		p := filepath.Join(parent, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return []string{p}, nil
+		}
+	}
+	return nil, fmt.Errorf("no moh wav files in %s", dir)
+}
+
+func wavFilesIn(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err

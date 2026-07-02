@@ -2,6 +2,7 @@ package pbx
 
 import (
 	"context"
+	"time"
 
 	"github.com/emiago/diago"
 	"github.com/emiago/sipgo/sip"
@@ -67,7 +68,7 @@ func (s *Server) handleTransfer(ctx context.Context, in *diago.DialogServerSessi
 	}
 	s.holdOtherParty(ctx, ac, from)
 	in.Trying()
-	if err := in.Answer(); err != nil {
+	if err := call.AnswerSession(in); err != nil {
 		return
 	}
 	in.Hangup(ctx)
@@ -102,7 +103,7 @@ func (s *Server) handlePark(ctx context.Context, in *diago.DialogServerSession, 
 	}
 
 	in.Trying()
-	if err := in.Answer(); err != nil {
+	if err := call.AnswerSession(in); err != nil {
 		return
 	}
 	in.Hangup(ctx)
@@ -113,8 +114,19 @@ func (s *Server) handlePark(ctx context.Context, in *diago.DialogServerSession, 
 
 func (s *Server) handleParkRetrieve(ctx context.Context, in *diago.DialogServerSession, from, slot string) {
 	if slot == "" {
-		_ = in.Respond(sip.StatusBadRequest, "Slot Required", nil)
-		return
+		in.Trying()
+		if err := call.AnswerSession(in); err != nil {
+			if s.log != nil {
+				s.log.Debug("park retrieve answer failed", "from", from, "error", err)
+			}
+			return
+		}
+		var ok bool
+		slot, ok = call.PromptAndReadDigits(ctx, in, s.soundPath(s.cfg.Sounds.Extension), 20*time.Second, s.log)
+		if !ok || slot == "" {
+			in.Hangup(ctx)
+			return
+		}
 	}
 	pc := s.park.Retrieve(slot)
 	if pc == nil {

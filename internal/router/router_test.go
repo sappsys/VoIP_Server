@@ -17,6 +17,7 @@ func TestRouteDial(t *testing.T) {
 		{fc.CallReturn, KindCallReturn},
 		{fc.Transfer, KindTransfer},
 		{fc.Park, KindPark},
+		{fc.ParkRetrieve, KindParkRetrieve},
 		{fc.ParkRetrieve + "101", KindParkRetrieve},
 		{fc.DNDActivate, KindDNDActivate},
 		{fc.DNDDeactivate, KindDNDDeactivate},

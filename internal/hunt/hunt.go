@@ -62,7 +62,7 @@ func (h *Handler) sequential(ctx context.Context, dg Dialer, in *diago.DialogSer
 			return nil
 		}
 		bridge := diago.NewBridge()
-		if err := in.Answer(); err != nil {
+		if err := call.AnswerSession(in); err != nil {
 			out.Close()
 			return err
 		}
@@ -126,7 +126,7 @@ func (h *Handler) simultaneous(ctx context.Context, dg Dialer, in *diago.DialogS
 			return nil
 		}
 		bridge := diago.NewBridge()
-		if err := in.Answer(); err != nil {
+		if err := call.AnswerSession(in); err != nil {
 			out.Close()
 			return err
 		}

@@ -3,6 +3,7 @@ package conference
 import (
 	"testing"
 
+	"github.com/emiago/diago"
 	"github.com/sappsys/VoIP_Server/internal/store"
 )
 
@@ -17,6 +18,13 @@ func TestRoomParticipantCount(t *testing.T) {
 	room.mu.Unlock()
 	if m.Participants("600") != 2 {
 		t.Fatalf("expected 2 participants")
+	}
+}
+
+func TestReconcileMode(t *testing.T) {
+	room := &Room{Number: "600", Bridge: diago.NewBridgeMix()}
+	if n := len(room.aliveSessionsLocked()); n != 0 {
+		t.Fatalf("alive=%d", n)
 	}
 }
 

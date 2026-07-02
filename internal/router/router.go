@@ -70,6 +70,8 @@ func RouteDial(dial string, fc FeatureCodes) Route {
 			return Route{Kind: KindTransfer}
 		case fc.Park:
 			return Route{Kind: KindPark}
+		case fc.ParkRetrieve:
+			return Route{Kind: KindParkRetrieve}
 		case fc.DNDActivate:
 			return Route{Kind: KindDNDActivate}
 		case fc.DNDDeactivate:

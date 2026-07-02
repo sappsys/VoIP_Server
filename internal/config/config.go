@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -18,6 +19,7 @@ type Config struct {
 	Database DatabaseConfig `toml:"database"`
 	Paths    PathsConfig    `toml:"paths"`
 	Features FeaturesConfig `toml:"features"`
+	Sounds   SoundsConfig   `toml:"sounds"`
 	Trunks   []TrunkConfig  `toml:"trunks"`
 	Users    []WebUser      `toml:"web.users"`
 }
@@ -32,6 +34,8 @@ type ServerConfig struct {
 	MOHFile      string `toml:"moh_file"` // deprecated: parent directory used when moh_dir is empty
 	// OptionsKeepaliveSeconds sends SIP OPTIONS to registered phones (0 = disabled).
 	OptionsKeepaliveSeconds int `toml:"options_keepalive_seconds"`
+	// TrunkKeepaliveSeconds sends SIP OPTIONS to enabled trunks with keepalive=options (0 = disabled).
+	TrunkKeepaliveSeconds int `toml:"trunk_keepalive_seconds"`
 	// RegisterMinExpiry rejects shorter REGISTER Expires values (seconds).
 	RegisterMinExpiry int `toml:"register_min_expiry"`
 	// RegisterMaxExpiry caps REGISTER Expires (seconds).
@@ -75,6 +79,19 @@ type PathsConfig struct {
 	PhonebookDir string `toml:"phonebook_dir"`
 }
 
+// SoundsConfig configures voice prompt WAV files played to callers.
+// Dir is the base directory; the other fields are filenames relative to Dir
+// (or absolute paths). Empty filename disables that prompt.
+type SoundsConfig struct {
+	Dir         string `toml:"dir"`
+	Busy        string `toml:"busy"`         // recipient busy, no call waiting
+	WrongNumber string `toml:"wrong_number"` // invalid/unknown number dialed
+	ConfPIN     string `toml:"conf_pin"`     // prompt for conference PIN
+	ConfPINBad  string `toml:"conf_pin_bad"` // conference PIN incorrect
+	Unavailable string `toml:"unavailable"`  // extension unregistered/unavailable
+	Extension   string `toml:"extension"`    // prompt for extension digits (park retrieve)
+}
+
 type TrunkConfig struct {
 	ID        int    `toml:"id"`
 	Name      string `toml:"name"`
@@ -83,7 +100,13 @@ type TrunkConfig struct {
 	Username  string `toml:"username"`
 	Password  string `toml:"password"`
 	Transport string `toml:"transport"`
-	Enabled   bool   `toml:"enabled"`
+	// Keepalive: options (default), register, or off.
+	Keepalive string `toml:"keepalive"`
+	// KeepaliveSeconds is the OPTIONS ping interval for NAT/liveness (default 30).
+	KeepaliveSeconds int `toml:"keepalive_seconds"`
+	// RegisterExpirySeconds is the REGISTER Expires sent to the provider (default 3600).
+	RegisterExpirySeconds int  `toml:"register_expiry_seconds"`
+	Enabled               bool `toml:"enabled"`
 }
 
 type Extension struct {
@@ -136,6 +159,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Server.OptionsKeepaliveSeconds == 0 {
 		cfg.Server.OptionsKeepaliveSeconds = 30
 	}
+	if cfg.Server.TrunkKeepaliveSeconds == 0 {
+		cfg.Server.TrunkKeepaliveSeconds = 30
+	}
 	if cfg.Logging.Level == "" {
 		cfg.Logging.Level = "info"
 	}
@@ -170,6 +196,7 @@ func setDefaults(cfg *Config) {
 	if cfg.Paths.PhonebookDir == "" {
 		cfg.Paths.PhonebookDir = "phonebook"
 	}
+	setSoundDefaults(&cfg.Sounds)
 	setFeatureDefaults(&cfg.Features)
 	if len(cfg.Users) == 0 {
 		cfg.Users = []WebUser{{Username: "admin", Password: "admin", Role: "admin"}}
@@ -180,6 +207,12 @@ func setDefaults(cfg *Config) {
 		}
 		if cfg.Trunks[i].ID == 0 {
 			cfg.Trunks[i].ID = i + 1
+		}
+		if cfg.Trunks[i].KeepaliveSeconds == 0 {
+			cfg.Trunks[i].KeepaliveSeconds = cfg.Server.TrunkKeepaliveSeconds
+		}
+		if cfg.Trunks[i].RegisterExpirySeconds == 0 {
+			cfg.Trunks[i].RegisterExpirySeconds = 3600
 		}
 	}
 }
@@ -203,6 +236,22 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("duplicate trunk prefix %q", t.Prefix)
 		}
 		seen[t.Prefix] = true
+		mode, err := NormalizeTrunkKeepalive(t.Keepalive)
+		if err != nil {
+			return fmt.Errorf("trunk %q: %w", t.Name, err)
+		}
+		if mode == "register" && t.Username == "" {
+			return fmt.Errorf("trunk %q: keepalive register requires username", t.Name)
+		}
+		if t.KeepaliveSeconds < 0 {
+			return fmt.Errorf("trunk %q: keepalive_seconds must be >= 0", t.Name)
+		}
+		if t.RegisterExpirySeconds < 0 {
+			return fmt.Errorf("trunk %q: register_expiry_seconds must be >= 0", t.Name)
+		}
+		if t.RegisterExpirySeconds > 0 && t.RegisterExpirySeconds < c.Server.RegisterMinExpiry {
+			return fmt.Errorf("trunk %q: register_expiry_seconds must be >= %d", t.Name, c.Server.RegisterMinExpiry)
+		}
 	}
 	return nil
 }
@@ -301,4 +350,36 @@ func (c *Config) EnabledTrunks() []TrunkConfig {
 		}
 	}
 	return out
+}
+
+// NormalizeTrunkKeepalive returns options (default), register, or off.
+func NormalizeTrunkKeepalive(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "options":
+		return "options", nil
+	case "register":
+		return "register", nil
+	case "off", "none", "disabled":
+		return "off", nil
+	default:
+		return "", fmt.Errorf("keepalive must be options, register, or off")
+	}
+}
+
+// KeepaliveInterval returns the OPTIONS ping interval for a trunk.
+func (t *TrunkConfig) KeepaliveInterval() time.Duration {
+	sec := t.KeepaliveSeconds
+	if sec <= 0 {
+		sec = 30
+	}
+	return time.Duration(sec) * time.Second
+}
+
+// RegisterExpiry returns the REGISTER lifetime requested for a trunk.
+func (t *TrunkConfig) RegisterExpiry() time.Duration {
+	sec := t.RegisterExpirySeconds
+	if sec <= 0 {
+		sec = 3600
+	}
+	return time.Duration(sec) * time.Second
 }

@@ -73,6 +73,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/phonebook/delete", s.auth(s.handlePhonebookDelete))
 	mux.HandleFunc("/phonebook/", s.handlePhonebookStatic)
 	mux.HandleFunc("/reload", s.auth(s.handleReload))
+	mux.HandleFunc("/backup", s.auth(s.handleBackup))
+	mux.HandleFunc("/backup/download", s.auth(s.handleBackupDownload))
+	mux.HandleFunc("/backup/restore", s.auth(s.handleBackupRestore))
 	return mux
 }
 
@@ -98,7 +101,7 @@ func (s *Server) renderWithHead(w http.ResponseWriter, r *http.Request, content,
 	page = strings.Replace(page, "{{EXTRA_HEAD}}", extraHead, 1)
 	adminNav := ""
 	if s.isAdmin(r) {
-		adminNav = `<a href="/users">Users</a>`
+		adminNav = `<a href="/users">Users</a><a href="/backup">Backup</a>`
 	}
 	page = strings.Replace(page, "{{ADMIN_NAV}}", adminNav, 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -604,11 +607,13 @@ func (s *Server) handleTrunks(w http.ResponseWriter, r *http.Request) {
 		if rt.RouteType == "" {
 			rt.RouteType = "all"
 		}
-		rows += fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+		keepalive, _ := config.NormalizeTrunkKeepalive(t.Keepalive)
+		rows += fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%ds</td><td>%ds</td><td>%s</td><td>%s</td></tr>`,
 			t.ID, html.EscapeString(t.Name), html.EscapeString(t.Prefix), html.EscapeString(t.Server),
+			html.EscapeString(keepalive), t.KeepaliveSeconds, t.RegisterExpirySeconds,
 			html.EscapeString(rt.RouteType), html.EscapeString(rt.RouteTarget))
 		if admin {
-			rows += fmt.Sprintf(`<tr class="subform-row"><td colspan="6"><form class="inline-form-row" method="post" action="/trunks/route">
+			rows += fmt.Sprintf(`<tr class="subform-row"><td colspan="9"><form class="inline-form-row" method="post" action="/trunks/route">
 <input type="hidden" name="trunk_id" value="%d">
 <select name="route_type"><option value="all" %s>All extensions</option>
 <option value="extension" %s>Extension</option><option value="group" %s>Hunt group</option></select>
@@ -617,7 +622,7 @@ func (s *Server) handleTrunks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	content := pageHeader("Trunks", "Connection details are in <code>config.toml</code>. Set inbound routing below.") +
-		panel("Trunk routes", dataTable(th("ID", "Name", "Prefix", "Server", "Route", "Target"), rows))
+		panel("Trunk routes", dataTable(th("ID", "Name", "Prefix", "Server", "Keepalive", "Ping(s)", "Reg(s)", "Route", "Target"), rows))
 	s.render(w, r, content)
 }
 

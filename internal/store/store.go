@@ -147,6 +147,16 @@ CREATE TABLE IF NOT EXISTS call_log (
   trunk_prefix TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_call_log_started ON call_log(started_at DESC);
+CREATE TABLE IF NOT EXISTS offline_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  recipient TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  content_type TEXT NOT NULL DEFAULT 'text/plain',
+  body BLOB NOT NULL,
+  created_at TEXT NOT NULL,
+  delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_offline_pending ON offline_messages(recipient) WHERE delivered_at IS NULL;
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return err

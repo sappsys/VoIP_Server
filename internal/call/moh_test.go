@@ -42,3 +42,22 @@ func TestMOHTracksMissingDir(t *testing.T) {
 		t.Fatal("expected error for missing directory")
 	}
 }
+
+func TestMOHTracksParentFallback(t *testing.T) {
+	dir := t.TempDir()
+	mohDir := filepath.Join(dir, "moh")
+	if err := os.Mkdir(mohDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parentWav := filepath.Join(dir, "moh.wav")
+	if err := os.WriteFile(parentWav, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tracks, err := MOHTracks(mohDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 1 || tracks[0] != parentWav {
+		t.Fatalf("tracks=%v want %q", tracks, parentWav)
+	}
+}

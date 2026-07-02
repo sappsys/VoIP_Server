@@ -8,15 +8,17 @@ import (
 	"strings"
 
 	"github.com/emiago/diago"
+	diagomedia "github.com/emiago/diago/media"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
-	diagomedia "github.com/emiago/diago/media"
 	"github.com/sappsys/VoIP_Server/internal/call"
 	"github.com/sappsys/VoIP_Server/internal/conference"
 	"github.com/sappsys/VoIP_Server/internal/config"
 	"github.com/sappsys/VoIP_Server/internal/hunt"
 	mediacodecs "github.com/sappsys/VoIP_Server/internal/media"
+	"github.com/sappsys/VoIP_Server/internal/message"
 	"github.com/sappsys/VoIP_Server/internal/paging"
+	"github.com/sappsys/VoIP_Server/internal/presence"
 	"github.com/sappsys/VoIP_Server/internal/registrar"
 	"github.com/sappsys/VoIP_Server/internal/router"
 	"github.com/sappsys/VoIP_Server/internal/store"
@@ -24,26 +26,28 @@ import (
 )
 
 type Server struct {
-	cfg      *config.Config
-	cfgDir   string
-	extDir   string
-	exts     map[string]*config.Extension
-	store    *store.Store
-	reg      *registrar.Registrar
-	calls    *call.Manager
-	registry *call.Registry
-	park     *call.ParkLot
-	hunt     *hunt.Handler
-	conf     *conference.Manager
-	trunk    *trunk.Handler
-	paging   *paging.Handler
-	bridge   call.BridgePair
-	features router.FeatureCodes
-	dg       *diago.Diago
-	testDialer call.Dialer // when set, used instead of dg for outbound INVITE (tests)
+	cfg            *config.Config
+	cfgDir         string
+	extDir         string
+	exts           map[string]*config.Extension
+	store          *store.Store
+	reg            *registrar.Registrar
+	calls          *call.Manager
+	registry       *call.Registry
+	park           *call.ParkLot
+	hunt           *hunt.Handler
+	conf           *conference.Manager
+	trunk          *trunk.Handler
+	paging         *paging.Handler
+	msgs           *message.Handler
+	presence       *presence.Handler
+	bridge         call.BridgePair
+	features       router.FeatureCodes
+	dg             *diago.Diago
+	testDialer     call.Dialer // when set, used instead of dg for outbound INVITE (tests)
 	testRingCaller func(ctx context.Context, in *diago.DialogServerSession) error
-	ua       *sipgo.UserAgent
-	log      *slog.Logger
+	ua             *sipgo.UserAgent
+	log            *slog.Logger
 }
 
 func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Extension, st *store.Store, log *slog.Logger) (*Server, error) {
@@ -61,8 +65,10 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 	}
 	reg := registrar.New(cfg.Server.Realm, cfg.Server, exts, log)
 	reg.Attach(srv)
-
 	extHost := cfg.ExternalHost()
+	msgs := message.New(reg, exts, cfg.Features.FeatureCodes(), extHost, log)
+	msgs.Attach(srv)
+	msgs.SetStore(st)
 	bindHost := cfg.SIPBindHost()
 	if bindHost != cfg.Server.BindHost {
 		log.Info("sip bind host", "configured", cfg.Server.BindHost, "using", bindHost, "reason", "external_host set while bind_host is all-interfaces")
@@ -88,6 +94,8 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 			MediaExternalIP: mediaIP,
 		}),
 	)
+	pres := presence.New(reg, exts, cfg.Features.FeatureCodes(), extHost, log)
+	pres.Attach(srv)
 
 	mohDir := cfg.Server.MOHDir
 	if !strings.HasPrefix(mohDir, "/") {
@@ -113,6 +121,8 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 		conf:     conference.NewManager(log),
 		trunk:    trunk.NewHandler(st, reg, cfg, log),
 		paging:   paging.NewHandler(reg, log),
+		msgs:     msgs,
+		presence: pres,
 		bridge:   bridge,
 		features: cfg.Features.FeatureCodes(),
 		dg:       dg,
@@ -120,6 +130,14 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 		log:      log,
 	}
 	s.bridge.RecordCall = s.recordCall
+	bridge.OnCallStateChange = func(caller, callee string, _ bool) {
+		s.presence.NotifyExtensions(caller, callee)
+	}
+	pres.SetStateResolver(s.presenceState)
+	reg.SetOnBindingChange(func(ext string) {
+		s.presence.NotifyExtension(ext)
+		s.msgs.OnRecipientOnline(ext)
+	})
 	dg.HandleFunc(s.handleInvite)
 	return s, nil
 }
@@ -143,12 +161,16 @@ func (s *Server) ringCaller(ctx context.Context, in *diago.DialogServerSession) 
 func (s *Server) ReloadExtensions(exts map[string]*config.Extension) {
 	s.exts = exts
 	s.reg.UpdateExtensions(exts)
+	s.msgs.UpdateExtensions(exts)
+	s.presence.UpdateExtensions(exts)
 }
 
 func (s *Server) ReloadConfig(cfg *config.Config) {
 	s.cfg = cfg
 	s.features = cfg.Features.FeatureCodes()
-	s.trunk = trunk.NewHandler(s.store, s.reg, cfg, s.log)
+	s.msgs.UpdateFeatures(s.features)
+	s.presence.UpdateFeatures(s.features)
+	s.trunk.UpdateConfig(cfg)
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -156,7 +178,14 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.msgs.SetClient(client)
+	if err := s.presence.InitNotifySender(ctx); err != nil {
+		return err
+	}
+	s.presence.SetClient(client)
+	go s.presence.RunBackground(ctx)
 	s.reg.RunBackground(ctx, client)
+	s.trunk.RunBackground(ctx, s.dg, s.ua)
 	return s.dg.Serve(ctx, s.handleInvite)
 }
 
@@ -171,6 +200,11 @@ func (s *Server) mohDir() string {
 		return p
 	}
 	return s.cfgDir + "/" + p
+}
+
+// soundPath resolves a configured prompt filename to a full path ("" = disabled).
+func (s *Server) soundPath(filename string) string {
+	return s.cfg.Sounds.SoundPath(s.cfgDir, filename)
 }
 
 func (s *Server) connectOpts(from, to string) call.ConnectOpts {
@@ -238,7 +272,12 @@ func (s *Server) handleInvite(in *diago.DialogServerSession) {
 
 	sess, err := s.calls.TryAcquire(in.ID, from, dial, callerName, s.exts)
 	if err != nil {
-		_ = in.Respond(sip.StatusBusyHere, "Busy Here", nil)
+		s.log.Debug("call rejected busy", "from", from, "to", dial, "error", err)
+		if p := s.soundPath(s.cfg.Sounds.Busy); p != "" {
+			call.AnswerAndPrompt(ctx, in, p, s.log)
+		} else {
+			_ = in.Respond(sip.StatusBusyHere, "Busy Here", nil)
+		}
 		return
 	}
 	defer s.calls.Release(in.ID)
@@ -264,7 +303,12 @@ func (s *Server) handleInvite(in *diago.DialogServerSession) {
 		}
 		_ = s.trunk.Outbound(ctx, s.inviteDialer(), in, route.Prefix, route.Rest, opts, s.mohDir(), &s.bridge)
 	default:
-		_ = in.Respond(sip.StatusNotFound, "Not Found", nil)
+		s.log.Debug("wrong number dialed", "from", from, "to", dial)
+		if p := s.soundPath(s.cfg.Sounds.WrongNumber); p != "" {
+			call.AnswerAndPrompt(ctx, in, p, s.log)
+		} else {
+			_ = in.Respond(sip.StatusNotFound, "Not Found", nil)
+		}
 	}
 	_ = sess
 }
@@ -343,7 +387,11 @@ func (s *Server) bridgeToExtension(ctx context.Context, in *diago.DialogServerSe
 	uri, dest, transport, ok := s.reg.DialTarget(ext)
 	if !ok {
 		s.log.Warn("call to unregistered extension", "from", in.FromUser(), "to", ext)
-		_ = in.Respond(sip.StatusTemporarilyUnavailable, "Unregistered", nil)
+		if p := s.soundPath(s.cfg.Sounds.Unavailable); p != "" {
+			call.AnswerAndPrompt(ctx, in, p, s.log)
+		} else {
+			_ = in.Respond(sip.StatusTemporarilyUnavailable, "Unregistered", nil)
+		}
 		return fmt.Errorf("unregistered")
 	}
 	s.log.Debug("bridge to extension", "from", in.FromUser(), "to", ext, "contact", uri.String(), "dest", dest)
@@ -374,10 +422,20 @@ func (s *Server) handleHunt(ctx context.Context, in *diago.DialogServerSession, 
 func (s *Server) handleConference(ctx context.Context, in *diago.DialogServerSession, number string) error {
 	c, err := s.store.GetConferenceByNumber(number)
 	if err != nil || c == nil || !c.Enabled {
+		s.log.Info("conference not found", "number", number, "from", in.FromUser())
 		_ = in.Respond(sip.StatusNotFound, "Not Found", nil)
 		return err
 	}
-	return s.conf.HandleJoin(ctx, in, c)
+	joinOpts := conference.JoinOptions{
+		MOHDir:       s.mohDir(),
+		PINPrompt:    s.soundPath(s.cfg.Sounds.ConfPIN),
+		PINBadPrompt: s.soundPath(s.cfg.Sounds.ConfPINBad),
+	}
+	if err := s.conf.HandleJoin(ctx, in, c, joinOpts); err != nil {
+		s.log.Warn("conference join failed", "number", number, "from", in.FromUser(), "error", err)
+		return err
+	}
+	return nil
 }
 
 func (s *Server) handlePaging(ctx context.Context, in *diago.DialogServerSession, code string) error {

@@ -8,7 +8,30 @@ an `alpha` prerelease suffix.
 
 ## [Unreleased]
 
-_No changes yet._
+## [v0.1.4alpha] - 2026-07-02
+
+[Release](https://github.com/sappsys/VoIP_Server/releases/tag/v0.1.4alpha)
+
+### Added
+
+- SIP instant messaging (`MESSAGE`) relay between registered extensions (text/plain and other content types)
+- SIP presence via `SUBSCRIBE`/`NOTIFY` with PIDF XML (`open` / `closed` / `busy`)
+- Offline message queue in SQLite, delivered when the recipient registers
+- Admin backup/restore of `config.toml`, extensions, SQLite database, and optional MOH/phonebook files
+- Trunk keepalive: per-trunk SIP `OPTIONS` pings (`keepalive_seconds`, default 30s) and optional `keepalive = "register"` with `register_expiry_seconds` (default 3600s); OPTIONS use the bound SIP socket for NAT pinholes
+- Conference MOH: music on hold plays when only one participant is in a conference room; mixing starts when a second person joins
+- MOH fallback finds `assets/moh.wav` when `assets/moh/` is empty; conference answers before PIN collection
+- Configurable voice prompts via `[sounds]` in `config.toml`: busy (no call waiting), invalid/unknown number, conference PIN request, conference PIN incorrect (with re-request, up to 3 attempts), extension unavailable, and extension prompt for park retrieve (`*86` without slot)
+- Dual DTMF detection for PIN/extension entry: RFC 2833 (`telephone-event`) and in-band G.711 tones
+- WAV resampling for MOH/prompts: non-8 kHz stereo files are converted automatically for G.711 playback
+
+### Fixed
+
+- Conference PIN rejected when phones send DTMF on negotiated `telephone-event` PT (e.g. 95) instead of default 101; codec list patched at answer time
+- PIN and extension digit entry require `#` to submit (timeout without `#` no longer accepted)
+- MOH sounding like noise: resampled PCM now encoded to G.711 (`audio/pcm`) instead of sent as raw RTP
+- MOH playback loop calling `Play()` repeatedly on the same file, causing cutouts and early stop
+- Outbound hold MOH using raw WAV bytes without decode/encode
 
 ## [v0.1.3alpha] - 2026-07-02
 

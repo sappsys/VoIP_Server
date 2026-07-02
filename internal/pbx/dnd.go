@@ -6,6 +6,7 @@ import (
 
 	"github.com/emiago/diago"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sappsys/VoIP_Server/internal/call"
 	"github.com/sappsys/VoIP_Server/internal/config"
 )
 
@@ -19,6 +20,7 @@ func (s *Server) setDND(ext string, on bool) error {
 		return err
 	}
 	s.exts[ext] = e
+	s.presence.NotifyExtension(ext)
 	return nil
 }
 
@@ -39,7 +41,7 @@ func (s *Server) handleDND(ctx context.Context, in *diago.DialogServerSession, f
 		return
 	}
 	in.Trying()
-	if err := in.Answer(); err != nil {
+	if err := call.AnswerSession(in); err != nil {
 		return
 	}
 	in.Hangup(ctx)

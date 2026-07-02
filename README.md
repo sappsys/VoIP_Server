@@ -1,6 +1,6 @@
 # VoIP PBX Server
 
-**Version: v0.1.3alpha** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+**Version: v0.1.4alpha** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 Go SIP PBX using [sipgo](https://github.com/emiago/sipgo) and [diago](https://github.com/emiago/diago).
 
@@ -10,6 +10,10 @@ Repository: [sappsys/VoIP_Server](https://github.com/sappsys/VoIP_Server)
 
 - Extension registration (digest auth) via `extensions/*.toml`
 - Extension-to-extension calls with caller display name (`P-Asserted-Identity`)
+- SIP instant messaging (`MESSAGE`) between registered extensions
+- SIP presence (`SUBSCRIBE`/`NOTIFY`) with online, offline, and busy (DND/in-call) states
+- Offline message storage — messages to unregistered extensions are delivered on next register
+- Web admin backup/restore — download or upload a `.tar.gz` of `config.toml`, extensions, and SQLite DB
 - Call waiting and per-extension simultaneous call limits
 - Hunt groups 500–599 (simultaneous / sequential) — web UI + SQLite
 - Conferences 600–699 with PIN IVR and `BridgeMix` — web UI + SQLite

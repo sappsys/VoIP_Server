@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 
 	"github.com/emiago/diago"
 	"github.com/emiago/sipgo/sip"
@@ -20,6 +21,7 @@ type Handler struct {
 	Reg   *registrar.Registrar
 	Cfg   *config.Config
 	Log   *slog.Logger
+	cfgMu sync.RWMutex
 }
 
 func NewHandler(st *store.Store, reg *registrar.Registrar, cfg *config.Config, log *slog.Logger) *Handler {

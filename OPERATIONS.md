@@ -130,7 +130,20 @@ Look for `dnd updated`, `call parked`, `transfer complete`, `park retrieve faile
 
 SQLite path: `data/pbx.db` (default). Call history table: `extension_call_history`.
 
-Backup before upgrades:
+### Backup and restore
+
+**Web UI (admin):** **Backup** in the nav bar — download a `.tar.gz` archive or upload one to restore.
+
+The archive includes:
+
+- `config.toml` (server, trunks, features, web users seed)
+- `extensions/*.toml` (SIP extension credentials and settings)
+- SQLite database (`data/pbx.db` by default) — hunt groups, conferences, paging, trunk routes, phonebook DB, web users, call log
+- Optional: MOH WAV files and static phonebook XML
+
+Restore replaces those files and reloads the running PBX configuration (no restart required for SIP/extensions; restart recommended after trunk or listen-address changes).
+
+Manual database backup before upgrades:
 
 ```bash
 cp data/pbx.db data/pbx.db.bak

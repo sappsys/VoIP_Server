@@ -24,7 +24,7 @@ func NewHandler(reg *registrar.Registrar, log *slog.Logger) *Handler {
 
 func (h *Handler) Page(ctx context.Context, dg *diago.Diago, in *diago.DialogServerSession, group *store.PagingGroup, members []string) error {
 	in.Trying()
-	if err := in.Answer(); err != nil {
+	if err := call.AnswerSession(in); err != nil {
 		return err
 	}
 

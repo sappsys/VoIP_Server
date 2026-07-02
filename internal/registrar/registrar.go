@@ -31,6 +31,7 @@ type Registrar struct {
 	maxExpiry           time.Duration
 	preserveContactHost bool
 	optionsKeepalive    time.Duration
+	onBindingChange     func(extension string)
 }
 
 func New(realm string, srv config.ServerConfig, exts map[string]*config.Extension, log *slog.Logger) *Registrar {
@@ -71,6 +72,10 @@ func (r *Registrar) UpdateExtensions(exts map[string]*config.Extension) {
 func (r *Registrar) Attach(server *sipgo.Server) {
 	server.OnRegister(r.handleRegister)
 	server.OnOptions(r.handleOptions)
+}
+
+func (r *Registrar) SetOnBindingChange(fn func(extension string)) {
+	r.onBindingChange = fn
 }
 
 // RunBackground starts registration maintenance (OPTIONS keepalive and expiry GC).
@@ -166,8 +171,10 @@ func (r *Registrar) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
 		}
 	}
 	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
-	allow := sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, REFER, NOTIFY, INFO, UPDATE")
+	allow := sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, REFER, NOTIFY, INFO, UPDATE, MESSAGE, SUBSCRIBE")
+	allowEvents := sip.NewHeader("Allow-Events", "presence")
 	res.AppendHeader(allow)
+	res.AppendHeader(allowEvents)
 	_ = tx.Respond(res)
 }
 
@@ -190,7 +197,6 @@ func (r *Registrar) parseRequestedExpiry(req *sip.Request) time.Duration {
 
 func (r *Registrar) addBinding(user string, b Binding) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	list := r.bindings[user]
 	updated := list[:0]
 	for _, existing := range list {
@@ -200,11 +206,12 @@ func (r *Registrar) addBinding(user string, b Binding) {
 	}
 	updated = append(updated, b)
 	r.bindings[user] = updated
+	r.mu.Unlock()
+	r.fireBindingChange(user)
 }
 
 func (r *Registrar) removeBinding(user string, contact sip.ContactHeader) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	list := r.bindings[user]
 	out := list[:0]
 	target := contact.Address.String()
@@ -217,6 +224,14 @@ func (r *Registrar) removeBinding(user string, contact sip.ContactHeader) {
 		delete(r.bindings, user)
 	} else {
 		r.bindings[user] = out
+	}
+	r.mu.Unlock()
+	r.fireBindingChange(user)
+}
+
+func (r *Registrar) fireBindingChange(user string) {
+	if r.onBindingChange != nil {
+		r.onBindingChange(user)
 	}
 }
 
@@ -308,9 +323,9 @@ func (r *Registrar) runExpiryGC(ctx context.Context) {
 
 func (r *Registrar) pruneExpired() int {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	now := time.Now()
 	removed := 0
+	changed := make(map[string]struct{})
 	for user, list := range r.bindings {
 		out := list[:0]
 		for _, b := range list {
@@ -318,6 +333,7 @@ func (r *Registrar) pruneExpired() int {
 				out = append(out, b)
 			} else {
 				removed++
+				changed[user] = struct{}{}
 				r.log.Debug("registration expired", "user", user, "contact", b.Contact.Address.String())
 			}
 		}
@@ -326,6 +342,10 @@ func (r *Registrar) pruneExpired() int {
 		} else {
 			r.bindings[user] = out
 		}
+	}
+	r.mu.Unlock()
+	for user := range changed {
+		r.fireBindingChange(user)
 	}
 	return removed
 }

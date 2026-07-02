@@ -2,9 +2,7 @@ package call
 
 import (
 	"context"
-	"io"
 	"log/slog"
-	"os"
 
 	"github.com/emiago/diago"
 )
@@ -22,42 +20,17 @@ func PlayMOHToClient(ctx context.Context, out *diago.DialogClientSession, mohDir
 		}
 		return
 	}
-	w, err := out.AudioWriter()
+	pb, err := out.PlaybackCreate()
 	if err != nil {
+		if log != nil {
+			log.Warn("moh playback create failed", "error", err)
+		}
 		return
 	}
 	for {
 		for _, path := range tracks {
-			if !streamFileToClient(ctx, out, w, path) {
+			if !playWavFile(ctx, out.Context(), &pb, path, log) {
 				return
-			}
-		}
-	}
-}
-
-func streamFileToClient(ctx context.Context, out *diago.DialogClientSession, w io.Writer, path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return true // skip missing track
-	}
-	defer f.Close()
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-out.Context().Done():
-			return false
-		default:
-			buf := make([]byte, 4096)
-			n, err := f.Read(buf)
-			if n > 0 {
-				_, _ = w.Write(buf[:n])
-			}
-			if err == io.EOF {
-				return true
-			}
-			if err != nil {
-				return false
 			}
 		}
 	}
@@ -78,36 +51,15 @@ func PlayMOHToServer(ctx context.Context, in *diago.DialogServerSession, mohDir 
 	}
 	pb, err := in.PlaybackCreate()
 	if err != nil {
+		if log != nil {
+			log.Warn("moh playback create failed", "error", err)
+		}
 		return
 	}
 	for {
 		for _, path := range tracks {
-			if !playFileToServer(ctx, in, &pb, path) {
+			if !playWavFile(ctx, in.Context(), &pb, path, log) {
 				return
-			}
-		}
-	}
-}
-
-func playFileToServer(ctx context.Context, in *diago.DialogServerSession, pb *diago.AudioPlayback, path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return true
-	}
-	defer f.Close()
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-in.Context().Done():
-			return false
-		default:
-			_, err := pb.Play(f, "audio/wav")
-			if err == io.EOF {
-				return true
-			}
-			if err != nil {
-				return false
 			}
 		}
 	}

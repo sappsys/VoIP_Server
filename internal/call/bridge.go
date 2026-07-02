@@ -3,9 +3,7 @@ package call
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
-	"os"
 	"sync"
 
 	"github.com/emiago/diago"
@@ -16,10 +14,11 @@ import (
 
 // BridgePair connects caller (in) to callee (out) with correct ring-then-answer order.
 type BridgePair struct {
-	MOHDir     string
-	Log        *slog.Logger
-	Registry   *Registry
-	RecordCall func(callerExt, calleeExt string)
+	MOHDir             string
+	Log                *slog.Logger
+	Registry           *Registry
+	RecordCall         func(callerExt, calleeExt string)
+	OnCallStateChange  func(callerExt, calleeExt string, active bool)
 }
 
 // ConnectOpts configures a bridged call.
@@ -91,12 +90,15 @@ func (b *BridgePair) Connect(ctx context.Context, dg Dialer, in *diago.DialogSer
 		b.Registry.Register(ac)
 		defer b.Registry.Unregister(in.ID)
 	}
+	if b.OnCallStateChange != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
+		defer func() { b.OnCallStateChange(opts.CallerExt, opts.CalleeExt, false) }()
+	}
 
 	holdMOH := func(dm *diago.DialogMedia) {
 		b.maybeMOH(ctx, in, mohDir, dm)
 	}
 
-	if err := in.AnswerOptions(diago.AnswerOptions{
+	if err := AnswerSessionOptions(in, diago.AnswerOptions{
 		OnRefer:       b.makeTransferHandler(ctx, in, out, ac),
 		OnMediaUpdate: holdMOH,
 	}); err != nil {
@@ -106,6 +108,9 @@ func (b *BridgePair) Connect(ctx context.Context, dg Dialer, in *diago.DialogSer
 
 	if b.RecordCall != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
 		b.RecordCall(opts.CallerExt, opts.CalleeExt)
+	}
+	if b.OnCallStateChange != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
+		b.OnCallStateChange(opts.CallerExt, opts.CalleeExt, true)
 	}
 
 	if wantVideo && media.HasVideo(out.InviteResponse.Body()) {
@@ -139,12 +144,15 @@ func (b *BridgePair) Join(ctx context.Context, in *diago.DialogServerSession, ou
 		b.Registry.Register(ac)
 		defer b.Registry.Unregister(in.ID)
 	}
+	if b.OnCallStateChange != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
+		defer func() { b.OnCallStateChange(opts.CallerExt, opts.CalleeExt, false) }()
+	}
 
 	holdMOH := func(dm *diago.DialogMedia) {
 		b.maybeMOH(ctx, in, mohDir, dm)
 	}
 
-	if err := in.AnswerOptions(diago.AnswerOptions{
+	if err := AnswerSessionOptions(in, diago.AnswerOptions{
 		OnRefer:       b.makeTransferHandler(ctx, in, out, ac),
 		OnMediaUpdate: holdMOH,
 	}); err != nil {
@@ -153,6 +161,9 @@ func (b *BridgePair) Join(ctx context.Context, in *diago.DialogServerSession, ou
 
 	if b.RecordCall != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
 		b.RecordCall(opts.CallerExt, opts.CalleeExt)
+	}
+	if b.OnCallStateChange != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
+		b.OnCallStateChange(opts.CallerExt, opts.CalleeExt, true)
 	}
 
 	callerOffer := in.InviteRequest.Body()
@@ -247,36 +258,12 @@ func (b *BridgePair) maybeMOH(ctx context.Context, sess *diago.DialogServerSessi
 	go func() {
 		for {
 			for _, path := range tracks {
-				if !playMOHFile(ctx, sess, &pb, path) {
+				if !playWavFile(ctx, sess.Context(), &pb, path, b.Log) {
 					return
 				}
 			}
 		}
 	}()
-}
-
-func playMOHFile(ctx context.Context, sess *diago.DialogServerSession, pb *diago.AudioPlayback, path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return true
-	}
-	defer f.Close()
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-sess.Context().Done():
-			return false
-		default:
-			_, err := pb.Play(f, "audio/wav")
-			if err == io.EOF {
-				return true
-			}
-			if err != nil {
-				return false
-			}
-		}
-	}
 }
 
 func (b *BridgePair) startVideo(ctx context.Context, in *diago.DialogServerSession, out *diago.DialogClientSession, callerOffer, calleeAnswer []byte, externalIP string) {
@@ -398,7 +385,7 @@ func (b *BridgePair) BridgeParked(ctx context.Context, retrieverIn *diago.Dialog
 		pc.cancel()
 	}
 
-	if err := retrieverIn.Answer(); err != nil {
+	if err := AnswerSession(retrieverIn); err != nil {
 		return err
 	}
 
