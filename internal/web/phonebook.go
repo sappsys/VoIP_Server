@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sappsys/VoIP_Server/internal/store"
 )
 
 // Yealink/Grandstream-compatible remote phonebook XML.
@@ -85,35 +87,59 @@ func (s *Server) handlePhonebookStatic(w http.ResponseWriter, r *http.Request) {
 // handlePhonebook renders the admin UI to create/edit/delete entries.
 func (s *Server) handlePhonebook(w http.ResponseWriter, r *http.Request) {
 	entries, _ := s.store.ListPhonebookEntries()
+	admin := s.isAdmin(r)
+	editID := queryEditID(r)
+	var editing *store.PhonebookEntry
+	if editID > 0 {
+		editing, _ = s.store.GetPhonebookEntry(editID)
+	}
+
 	var rows string
 	for _, e := range entries {
-		rows += fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>
-<form hx-post="/phonebook/save" hx-target="body" style="display:inline">
-<input type="hidden" name="id" value="%d">
-<input name="name" value="%s" required>
-<input name="number" value="%s" required>
-<input name="label" value="%s" placeholder="label">
-<button>Update</button></form>
-<form hx-post="/phonebook/delete" hx-target="body" style="display:inline">
-<input type="hidden" name="id" value="%d"><button>Delete</button></form></td></tr>`,
-			html.EscapeString(e.Name), html.EscapeString(e.Number), html.EscapeString(e.Label),
-			e.ID, html.EscapeString(e.Name), html.EscapeString(e.Number), html.EscapeString(e.Label), e.ID)
+		actions := ""
+		if admin {
+			actions = rowActions(
+				editLink(fmt.Sprintf("/phonebook?edit=%d", e.ID)),
+				deleteForm("/phonebook/delete", "id", fmt.Sprintf("%d", e.ID)),
+			)
+		}
+		rows += fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td>`,
+			html.EscapeString(e.Name), html.EscapeString(e.Number), html.EscapeString(e.Label))
+		if admin {
+			rows += fmt.Sprintf(`<td>%s</td>`, actions)
+		}
+		rows += `</tr>`
 	}
-	content := `<h1>Remote phonebook</h1>
-<p>Served at <code>/phonebook/directory.xml</code> for IP phones (Yealink/Grandstream compatible).</p>
-<table><tr><th>Name</th><th>Number</th><th>Label</th><th>Edit / Delete</th></tr>` + rows + `</table>
-<h2>Add entry</h2>
-<form hx-post="/phonebook/save" hx-target="body">
-<input name="name" placeholder="Contact name" required>
-<input name="number" placeholder="101 or 302@host or sip:301@host" required>
-<input name="label" placeholder="label (optional)">
-<button>Add</button></form>`
-	s.render(w, content)
+	tableHeaders := th("Name", "Number", "Label")
+	if admin {
+		tableHeaders = th("Name", "Number", "Label", "Actions")
+	}
+
+	nameVal := ""
+	numberVal := ""
+	labelVal := ""
+	hiddenID := ""
+	if editing != nil {
+		nameVal = editing.Name
+		numberVal = editing.Number
+		labelVal = editing.Label
+		hiddenID = hiddenField("id", fmt.Sprintf("%d", editing.ID))
+	}
+
+	content := pageHeader("Remote phonebook", "Served at <code>/phonebook/directory.xml</code> for IP phones (Yealink/Grandstream compatible).") +
+		panel("Entries", dataTable(tableHeaders, rows)) +
+		adminOnly(admin, editPanel(editPanelTitle(editing != nil, "Add entry", "Edit entry"), formPost("/phonebook/save",
+			hiddenID+
+				field("Name", fmt.Sprintf(`<input name="name" placeholder="Contact name" required%s>`, valAttr(nameVal)))+
+				field("Number", fmt.Sprintf(`<input name="number" placeholder="101 or 302@host" required%s>`, valAttr(numberVal)))+
+				field("Label", fmt.Sprintf(`<input name="label" placeholder="label (optional)"%s>`, valAttr(labelVal)))+
+				formActions(fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" entry"))),
+		)))
+	s.render(w, r, content)
 }
 
 func (s *Server) handlePhonebookSave(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method", http.StatusMethodNotAllowed)
+	if !requirePOST(w, r) || !s.requireAdmin(w, r) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -130,12 +156,15 @@ func (s *Server) handlePhonebookSave(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_, _ = s.store.CreatePhonebookEntry(name, number, label)
 	}
-	s.handlePhonebook(w, r)
+	redirectTo(w, r, "/phonebook")
 }
 
 func (s *Server) handlePhonebookDelete(w http.ResponseWriter, r *http.Request) {
+	if !requirePOST(w, r) || !s.requireAdmin(w, r) {
+		return
+	}
 	var id int64
 	fmt.Sscan(r.FormValue("id"), &id)
 	_ = s.store.DeletePhonebookEntry(id)
-	s.handlePhonebook(w, r)
+	redirectTo(w, r, "/phonebook")
 }

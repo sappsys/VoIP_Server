@@ -14,7 +14,7 @@ import (
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
-	s.render(w, s.statusPageHTML(filter))
+	s.renderWithHead(w, r, s.statusPageHTML(filter), htmxScript)
 }
 
 func (s *Server) handleStatusFragment(w http.ResponseWriter, r *http.Request) {
@@ -26,9 +26,9 @@ func (s *Server) handleStatusFragment(w http.ResponseWriter, r *http.Request) {
 func (s *Server) statusPageHTML(filter string) string {
 	report := s.pbx.Status()
 	var b strings.Builder
-	b.WriteString(`<h1>Status</h1>`)
-	b.WriteString(fmt.Sprintf(`<p>Version <strong>%s</strong> · %d registered · %d active calls</p>`,
-		html.EscapeString(version.Version), report.RegisteredCount, report.ActiveCallCount))
+	b.WriteString(pageHeader("Status",
+		fmt.Sprintf("Version <strong>%s</strong> · %d registered · %d active calls",
+			html.EscapeString(version.Version), report.RegisteredCount, report.ActiveCallCount)))
 	b.WriteString(`<div id="status-live" hx-get="/status/fragment"`)
 	if filter != "" {
 		b.WriteString(`?filter=` + html.EscapeString(filter))
@@ -60,27 +60,29 @@ func (s *Server) statusLiveHTML(report pbx.StatusReport, log []store.CallLogEntr
 	b.WriteString(fmt.Sprintf(`<p class="status-meta">Updated %s · %d registered · %d active</p>`,
 		time.Now().Format("15:04:05"), report.RegisteredCount, report.ActiveCallCount))
 
-	b.WriteString(`<h2>Extensions</h2><table><tr><th>Ext</th><th>Name</th><th>Online</th><th>DND</th><th>Calls</th><th>In call with</th></tr>`)
+	var extRows strings.Builder
 	for _, e := range report.Extensions {
-		online := "offline"
+		stateClass := "badge-offline"
+		stateLabel := "offline"
 		if e.Registered {
-			online = "online"
+			stateClass = "badge-online"
+			stateLabel = "online"
 		}
 		with := e.InCallWith
 		if with == "" {
 			with = "—"
 		}
-		b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td class="%s">%s</td><td>%v</td><td>%d</td><td>%s</td></tr>`,
+		extRows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>%v</td><td>%d</td><td>%s</td></tr>`,
 			html.EscapeString(e.Extension), html.EscapeString(e.DisplayName),
-			online, online, e.DND, e.ActiveCalls, html.EscapeString(with)))
+			badge(stateClass, stateLabel), e.DND, e.ActiveCalls, html.EscapeString(with)))
 	}
-	b.WriteString(`</table>`)
+	b.WriteString(panel("Extensions", dataTable(th("Ext", "Name", "Online", "DND", "Calls", "In call with"), extRows.String())))
 
-	b.WriteString(`<h2>Active calls</h2>`)
+	var callBody strings.Builder
 	if len(report.BridgedCalls) == 0 && len(report.Connecting) == 0 {
-		b.WriteString(`<p>No active calls.</p>`)
+		callBody.WriteString(emptyState("No active calls."))
 	} else {
-		b.WriteString(`<table><tr><th>Caller</th><th>Callee</th><th>State</th></tr>`)
+		var rows strings.Builder
 		for _, c := range report.BridgedCalls {
 			state := "bridged"
 			if c.Parked {
@@ -88,45 +90,47 @@ func (s *Server) statusLiveHTML(report pbx.StatusReport, log []store.CallLogEntr
 			} else if c.TransferReady {
 				state = "transfer ready"
 			}
-			b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
 				html.EscapeString(c.CallerExt), html.EscapeString(c.CalleeExt), state))
 		}
 		for _, sess := range report.Connecting {
-			b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>connecting</td></tr>`,
+			rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>connecting</td></tr>`,
 				html.EscapeString(sess.Caller), html.EscapeString(sess.Callee)))
 		}
-		b.WriteString(`</table>`)
+		callBody.WriteString(dataTable(th("Caller", "Callee", "State"), rows.String()))
 	}
+	b.WriteString(panel("Active calls", callBody.String()))
 
 	if len(report.ParkedSlots) > 0 {
-		b.WriteString(`<h2>Parked</h2><p>`)
+		var slots strings.Builder
 		for i, slot := range report.ParkedSlots {
 			if i > 0 {
-				b.WriteString(", ")
+				slots.WriteString(", ")
 			}
-			b.WriteString(html.EscapeString(slot))
+			slots.WriteString(html.EscapeString(slot))
 		}
-		b.WriteString(`</p>`)
+		b.WriteString(panel("Parked", `<p>`+slots.String()+`</p>`))
 	}
 
-	b.WriteString(`<h2>Extension call history</h2>`)
+	var histBody strings.Builder
 	if len(hist) == 0 {
-		b.WriteString(`<p>No extension history yet.</p>`)
+		histBody.WriteString(emptyState("No extension history yet."))
 	} else {
-		b.WriteString(`<table><tr><th>Extension</th><th>Last dialed</th><th>Last caller</th></tr>`)
+		var rows strings.Builder
 		for _, h := range hist {
-			b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
 				html.EscapeString(h.Extension), html.EscapeString(h.LastDialed), html.EscapeString(h.LastCaller)))
 		}
-		b.WriteString(`</table>`)
+		histBody.WriteString(dataTable(th("Extension", "Last dialed", "Last caller"), rows.String()))
 	}
+	b.WriteString(panel("Extension call history", histBody.String()))
 
-	b.WriteString(`<h2>Call audit log</h2>`)
-	b.WriteString(statusFilterLinks(filter))
+	var logBody strings.Builder
+	logBody.WriteString(`<div class="filter-bar">Filter: ` + statusFilterLinks(filter) + `</div>`)
 	if len(log) == 0 {
-		b.WriteString(`<p>No matching call records.</p>`)
+		logBody.WriteString(emptyState("No matching call records."))
 	} else {
-		b.WriteString(`<table><tr><th>Time</th><th>Direction</th><th>Caller</th><th>Callee</th><th>Trunk</th></tr>`)
+		var rows strings.Builder
 		for _, e := range log {
 			trunk := e.TrunkName
 			if trunk == "" && e.TrunkPrefix != "" {
@@ -135,14 +139,15 @@ func (s *Server) statusLiveHTML(report pbx.StatusReport, log []store.CallLogEntr
 			if trunk == "" {
 				trunk = "—"
 			}
-			b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 				html.EscapeString(e.StartedAt.Format("2006-01-02 15:04:05")),
 				html.EscapeString(e.Direction),
 				html.EscapeString(e.Caller), html.EscapeString(e.Callee),
 				html.EscapeString(trunk)))
 		}
-		b.WriteString(`</table>`)
+		logBody.WriteString(dataTable(th("Time", "Direction", "Caller", "Callee", "Trunk"), rows.String()))
 	}
+	b.WriteString(panel("Call audit log", logBody.String()))
 	return b.String()
 }
 
@@ -165,5 +170,5 @@ func statusFilterLinks(active string) string {
 		}
 		parts = append(parts, label)
 	}
-	return `<p>Filter: ` + strings.Join(parts, " · ") + `</p>`
+	return strings.Join(parts, " · ")
 }

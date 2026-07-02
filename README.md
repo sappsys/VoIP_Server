@@ -1,6 +1,6 @@
 # VoIP PBX Server
 
-**Version: v0.10alpha**
+**Version: v0.11alpha**
 
 Go SIP PBX using [sipgo](https://github.com/emiago/sipgo) and [diago](https://github.com/emiago/diago).
 
@@ -144,7 +144,7 @@ A shared remote phonebook is served for IP phones (Yealink, Grandstream, and oth
 
 ```
 http://<web-ip>:<web-port>/phonebook/directory.xml
-e.g. http://192.168.105.240:7030/phonebook/directory.xml
+e.g. http://192.168.1.100:7030/phonebook/directory.xml
 ```
 
 - Manage entries (create / edit / delete) in the web UI under **Phonebook**.

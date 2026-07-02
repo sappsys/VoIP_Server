@@ -240,6 +240,29 @@ func (s *Store) GetWebUserByUsername(username string) (*WebUser, error) {
 	return &u, nil
 }
 
+func (s *Store) GetWebUser(id int64) (*WebUser, error) {
+	var u WebUser
+	err := s.db.QueryRow(`SELECT id, username, password_hash, role FROM web_users WHERE id=?`, id).
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (s *Store) UpdateWebUser(id int64, username, role, passwordHash string) error {
+	if passwordHash != "" {
+		_, err := s.db.Exec(`UPDATE web_users SET username=?, role=?, password_hash=? WHERE id=?`,
+			username, role, passwordHash, id)
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE web_users SET username=?, role=? WHERE id=?`, username, role, id)
+	return err
+}
+
 func (s *Store) UpsertWebUser(username, passwordHash, role string) error {
 	_, err := s.db.Exec(`INSERT INTO web_users(username, password_hash, role, created_at) VALUES(?,?,?,?)
 		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash, role=excluded.role`,
@@ -328,6 +351,15 @@ func (s *Store) CreateHuntGroup(name, number, strategy string, ringTimeout int) 
 	return err
 }
 
+func (s *Store) UpdateHuntGroup(id int64, name, number, strategy string, ringTimeout int) error {
+	if ringTimeout <= 0 {
+		ringTimeout = 20
+	}
+	_, err := s.db.Exec(`UPDATE hunt_groups SET name=?, number=?, strategy=?, ring_timeout_seconds=? WHERE id=?`,
+		name, number, strategy, ringTimeout, id)
+	return err
+}
+
 func (s *Store) DeleteHuntGroup(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM hunt_group_members WHERE group_id=?`, id)
 	if err != nil {
@@ -380,6 +412,21 @@ func (s *Store) ListConferences() ([]Conference, error) {
 	return list, rows.Err()
 }
 
+func (s *Store) GetConference(id int64) (*Conference, error) {
+	var c Conference
+	var en int
+	err := s.db.QueryRow(`SELECT id, name, number, pin_hash, max_participants, enabled FROM conferences WHERE id=?`, id).
+		Scan(&c.ID, &c.Name, &c.Number, &c.PINHash, &c.MaxParticipants, &en)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.Enabled = en != 0
+	return &c, nil
+}
+
 func (s *Store) GetConferenceByNumber(number string) (*Conference, error) {
 	var c Conference
 	var en int
@@ -408,6 +455,24 @@ func (s *Store) CreateConference(name, number, pin string, maxParticipants int) 
 	return err
 }
 
+func (s *Store) UpdateConference(id int64, name, number, pin string, maxParticipants int) error {
+	if maxParticipants < 2 {
+		maxParticipants = 16
+	}
+	if pin != "" {
+		hash, err := HashPassword(pin)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`UPDATE conferences SET name=?, number=?, pin_hash=?, max_participants=? WHERE id=?`,
+			name, number, hash, maxParticipants, id)
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE conferences SET name=?, number=?, max_participants=? WHERE id=?`,
+		name, number, maxParticipants, id)
+	return err
+}
+
 func (s *Store) DeleteConference(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM conferences WHERE id=?`, id)
 	return err
@@ -431,6 +496,21 @@ func (s *Store) ListPagingGroups() ([]PagingGroup, error) {
 		list = append(list, p)
 	}
 	return list, rows.Err()
+}
+
+func (s *Store) GetPagingGroup(id int64) (*PagingGroup, error) {
+	var p PagingGroup
+	var en int
+	err := s.db.QueryRow(`SELECT id, name, code, mode, multicast_address, channel, enabled FROM paging_groups WHERE id=?`, id).
+		Scan(&p.ID, &p.Name, &p.Code, &p.Mode, &p.MulticastAddress, &p.Channel, &en)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.Enabled = en != 0
+	return &p, nil
 }
 
 func (s *Store) GetPagingByCode(code string) (*PagingGroup, error) {
@@ -480,6 +560,16 @@ func (s *Store) CreatePagingGroup(name, code, mode, multicastAddr string, channe
 	}
 	_, err := s.db.Exec(`INSERT INTO paging_groups(name, code, mode, multicast_address, channel) VALUES(?,?,?,?,?)`,
 		name, code, mode, multicastAddr, channel)
+	return err
+}
+
+func (s *Store) UpdatePagingGroup(id int64, name, code, mode, multicastAddr string, channel int) error {
+	code = trimStar(code)
+	if mode == "" {
+		mode = "unicast"
+	}
+	_, err := s.db.Exec(`UPDATE paging_groups SET name=?, code=?, mode=?, multicast_address=?, channel=? WHERE id=?`,
+		name, code, mode, multicastAddr, channel, id)
 	return err
 }
 

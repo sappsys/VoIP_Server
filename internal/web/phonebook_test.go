@@ -74,13 +74,15 @@ func TestPhonebookXMLYealinkFormat(t *testing.T) {
 
 func TestPhonebookSaveAndDelete(t *testing.T) {
 	s, st, _ := testWebServer(t)
+	cookie := loginAs(t, s, "admin")
 
 	form := strings.NewReader("name=Carol&number=103&label=Desk")
 	req := httptest.NewRequest(http.MethodPost, "/phonebook/save", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
 	rr := httptest.NewRecorder()
 	s.handlePhonebookSave(rr, req)
-	if rr.Code != http.StatusOK {
+	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("save status=%d", rr.Code)
 	}
 
@@ -92,6 +94,7 @@ func TestPhonebookSaveAndDelete(t *testing.T) {
 	delForm := strings.NewReader("id=" + itoa(list[0].ID))
 	delReq := httptest.NewRequest(http.MethodPost, "/phonebook/delete", delForm)
 	delReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	delReq.AddCookie(cookie)
 	delRR := httptest.NewRecorder()
 	s.handlePhonebookDelete(delRR, delReq)
 
@@ -102,9 +105,11 @@ func TestPhonebookSaveAndDelete(t *testing.T) {
 
 func TestPhonebookSaveRequiresFields(t *testing.T) {
 	s, _, _ := testWebServer(t)
+	cookie := loginAs(t, s, "admin")
 	form := strings.NewReader("name=&number=")
 	req := httptest.NewRequest(http.MethodPost, "/phonebook/save", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
 	rr := httptest.NewRecorder()
 	s.handlePhonebookSave(rr, req)
 	if rr.Code != http.StatusBadRequest {
