@@ -1,0 +1,11 @@
+# Example extension — copy to <ext>.toml (e.g. 101.toml) and edit.
+# See README.md / OPERATIONS.md for the full field reference.
+extension = "101"
+display_name = "Alice"
+password = "change-me"
+enabled = true
+call_waiting = true
+max_simultaneous_calls = 4
+video_enabled = false
+voicemail = false
+dnd = false

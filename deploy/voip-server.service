@@ -1,0 +1,13 @@
+[Unit]
+Description=VoIP PBX Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/voip-server
+ExecStart=/opt/voip-server/voip-server -config /opt/voip-server/config.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

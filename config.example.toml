@@ -1,0 +1,57 @@
+[server]
+bind_host = "0.0.0.0"
+bind_port = 5060
+transport = "udp"
+external_host = ""
+realm = "voip.local"
+moh_dir = "assets/moh"
+
+# Voice codecs offered in SDP (preference order, first = most preferred).
+# Supported: PCMU PCMA G722 G729 G723-63 G723-53 G726-32 G726-16 G726-24 G726-40
+# Omit to use the full default set. telephone-event (DTMF) is added automatically.
+[media]
+codecs = ["PCMU", "PCMA", "G722", "G729", "G723-63", "G723-53", "G726-32", "G726-16", "G726-24", "G726-40"]
+
+[limits]
+max_calls = 200
+max_extensions = 400
+
+[web]
+listen = "0.0.0.0:7030"
+session_secret = "change-me-in-production"
+session_ttl_hours = 24
+
+[database]
+path = "data/pbx.db"
+
+[paths]
+extensions_dir = "extensions"
+# Optional: extra static remote-phonebook XML files served under /phonebook/<name>.xml.
+# The database-backed /phonebook/directory.xml is always available.
+phonebook_dir = "phonebook"
+
+# Star codes (defaults shown; omit * in values if you prefer — it is added automatically)
+[features]
+redial = "*66"
+call_return = "*69"
+transfer = "*77"
+park = "*85"
+park_retrieve = "*86"
+dnd_activate = "*78"
+dnd_deactivate = "*79"
+
+[[web.users]]
+username = "admin"
+password = "admin"
+role = "admin"
+
+# Trunk connection details (inbound routing configured via web UI → SQLite)
+# [[trunks]]
+# id = 1
+# name = "Provider-A"
+# prefix = "90"
+# server = "sip.provider.com:5060"
+# username = "trunkuser"
+# password = "trunkpass"
+# transport = "udp"
+# enabled = true

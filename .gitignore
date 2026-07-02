@@ -1,0 +1,26 @@
+# Binaries
+/voip-server
+/voip-server.exe
+/bin/
+*.exe
+
+# Config & data (keep examples)
+config.toml
+data/
+*.db
+
+# Runtime / local data (contains credentials or personal info)
+extensions/*.toml
+!extensions/example.toml
+directory.xml
+phonebook/
+assets/moh/*
+!assets/moh/.gitkeep
+assets/*.wav
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
