@@ -1,6 +1,6 @@
 # VoIP PBX Server
 
-**Version: v0.10alpha**
+**Version: v0.11alpha**
 
 Go SIP PBX using [sipgo](https://github.com/emiago/sipgo) and [diago](https://github.com/emiago/diago).
 
