@@ -223,7 +223,8 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 				field("Max simultaneous calls", fmt.Sprintf(`<input name="max_simultaneous_calls" placeholder="4"%s>`, valAttr(maxCalls)))+
 				checkField("Enabled", fmt.Sprintf(`<input type="checkbox" name="enabled" value="1"%s>`, checkedAttr(enabled)))+
 				checkField("Call waiting", fmt.Sprintf(`<input type="checkbox" name="call_waiting" value="1"%s>`, checkedAttr(cw)))+
-				formActions(fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" extension"))),
+				editFormActions(editing != nil, "/extensions",
+					fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" extension"))),
 		)))
 	s.render(w, r, body)
 }
@@ -351,7 +352,8 @@ func (s *Server) handleHunt(w http.ResponseWriter, r *http.Request) {
 				field("Strategy", strategySelect(strategy))+
 				field("Ring timeout", fmt.Sprintf(`<input name="ring_timeout" placeholder="20"%s>`, valAttr(timeout)))+
 				field("Members", fmt.Sprintf(`<input name="members" placeholder="101,102"%s>`, valAttr(editMembers)))+
-				formActions(fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" group"))),
+				editFormActions(editing != nil, "/hunt",
+					fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" group"))),
 		)))
 	s.render(w, r, content)
 }
@@ -448,7 +450,8 @@ func (s *Server) handleConferences(w http.ResponseWriter, r *http.Request) {
 				field("Name", fmt.Sprintf(`<input name="name" placeholder="Room"%s>`, valAttr(nameVal)))+
 				field("PIN", fmt.Sprintf(`<input name="pin" placeholder="%s"%s>`, html.EscapeString(pinPlaceholder), pinRequired))+
 				field("Max participants", fmt.Sprintf(`<input name="max_participants" placeholder="16"%s>`, valAttr(maxVal)))+
-				formActions(fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" room"))),
+				editFormActions(editing != nil, "/conferences",
+					fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" room"))),
 		)))
 	s.render(w, r, content)
 }
@@ -546,7 +549,8 @@ func (s *Server) handlePaging(w http.ResponseWriter, r *http.Request) {
 				field("Multicast address", fmt.Sprintf(`<input name="multicast_address" placeholder="224.0.1.100:10000"%s>`, valAttr(mcastVal)))+
 				field("Channel", fmt.Sprintf(`<input name="channel" placeholder="0"%s>`, valAttr(channelVal)))+
 				field("Members", fmt.Sprintf(`<input name="members" placeholder="101,102"%s>`, valAttr(editMembers)))+
-				formActions(fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" group"))),
+				editFormActions(editing != nil, "/paging",
+					fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" group"))),
 		)))
 	s.render(w, r, content)
 }
@@ -682,7 +686,8 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 				field("Username", fmt.Sprintf(`<input name="username" required%s%s>`, valAttr(usernameVal), usernameAttrs))+
 				field("Password", fmt.Sprintf(`<input name="password" type="password" placeholder="%s"%s>`, html.EscapeString(passPlaceholder), passRequired))+
 				roleSelect(role)+
-				formActions(fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" user"))),
+				editFormActions(editing != nil, "/users",
+					fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" user"))),
 		))
 	s.render(w, r, content)
 }

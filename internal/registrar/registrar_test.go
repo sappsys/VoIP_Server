@@ -12,7 +12,7 @@ func TestRegisterForTestAndContactURI(t *testing.T) {
 	exts := map[string]*config.Extension{
 		"101": {Extension: "101", Password: "secret", Enabled: true},
 	}
-	r := New("lab.local", exts, nil)
+	r := New("lab.local", config.ServerConfig{}, exts, nil)
 	r.RegisterForTest("101", sip.Uri{User: "101", Host: "10.0.0.5", Port: 5060})
 
 	uri, ok := r.ContactURI("101")
@@ -29,7 +29,7 @@ func TestRegisteredExtensionsList(t *testing.T) {
 		"101": {Extension: "101", Enabled: true},
 		"102": {Extension: "102", Enabled: true},
 	}
-	r := New("lab.local", exts, nil)
+	r := New("lab.local", config.ServerConfig{}, exts, nil)
 	r.RegisterForTest("101", sip.Uri{User: "101", Host: "127.0.0.1", Port: 5060})
 	r.RegisterForTest("102", sip.Uri{User: "102", Host: "127.0.0.1", Port: 5061})
 
@@ -40,7 +40,7 @@ func TestRegisteredExtensionsList(t *testing.T) {
 }
 
 func TestExpiredBindingIgnored(t *testing.T) {
-	r := New("lab.local", map[string]*config.Extension{}, nil)
+	r := New("lab.local", config.ServerConfig{}, map[string]*config.Extension{}, nil)
 	r.mu.Lock()
 	r.bindings["101"] = []Binding{{
 		Contact: sip.ContactHeader{Address: sip.Uri{User: "101", Host: "127.0.0.1"}},
@@ -53,7 +53,7 @@ func TestExpiredBindingIgnored(t *testing.T) {
 }
 
 func TestUpdateExtensions(t *testing.T) {
-	r := New("lab.local", map[string]*config.Extension{}, nil)
+	r := New("lab.local", config.ServerConfig{}, map[string]*config.Extension{}, nil)
 	exts := map[string]*config.Extension{
 		"201": {Extension: "201", Enabled: true},
 	}

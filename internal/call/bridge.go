@@ -24,19 +24,24 @@ type BridgePair struct {
 
 // ConnectOpts configures a bridged call.
 type ConnectOpts struct {
-	Headers      []sip.Header
-	Username     string
-	Password     string
-	VideoEnabled bool
-	ExternalIP   string
-	CallerExt    string
-	CalleeExt    string
+	Headers         []sip.Header
+	Username        string
+	Password        string
+	VideoEnabled    bool
+	ExternalIP      string
+	CallerExt       string
+	CalleeExt       string
+	DialDestination string // host:port for outbound INVITE (from registration)
+	DialTransport   string // udp/tcp from registration contact
 }
 
 // Connect dials the callee, answers the caller, optionally relays video, and
 // bridges audio until either leg hangs up. Registers the call in Registry for
 // transfer/park star codes.
 func (b *BridgePair) Connect(ctx context.Context, dg Dialer, in *diago.DialogServerSession, outURI sip.Uri, opts ConnectOpts, mohDir string) error {
+	if b.Log != nil {
+		b.Log.Debug("bridge connect", "caller", opts.CallerExt, "callee", opts.CalleeExt, "uri", outURI.String())
+	}
 	in.Trying()
 
 	headers := opts.Headers
@@ -47,7 +52,7 @@ func (b *BridgePair) Connect(ctx context.Context, dg Dialer, in *diago.DialogSer
 	callerOffer := in.InviteRequest.Body()
 	wantVideo := opts.VideoEnabled && media.HasVideo(callerOffer)
 
-	out, err := dg.Invite(ctx, outURI, diago.InviteOptions{
+	out, err := InviteOutLeg(ctx, dg, outURI, opts, diago.InviteOptions{
 		Originator: in,
 		Headers:    headers,
 		Username:   opts.Username,
@@ -63,6 +68,9 @@ func (b *BridgePair) Connect(ctx context.Context, dg Dialer, in *diago.DialogSer
 		},
 	})
 	if err != nil {
+		if b.Log != nil {
+			b.Log.Warn("outbound invite failed", "uri", outURI.String(), "dest", opts.DialDestination, "error", err)
+		}
 		_ = in.Respond(sip.StatusTemporarilyUnavailable, "Unavailable", nil)
 		return err
 	}
@@ -333,7 +341,7 @@ func (b *BridgePair) startVideo(ctx context.Context, in *diago.DialogServerSessi
 
 // CompleteTransfer bridges the held party to a new target and disconnects the transferor.
 // Used after *77 when the user dials the transfer destination extension.
-func (b *BridgePair) CompleteTransfer(ctx context.Context, dg Dialer, ac *ActiveCall, transferorIn *diago.DialogServerSession, targetURI sip.Uri, headers []sip.Header) error {
+func (b *BridgePair) CompleteTransfer(ctx context.Context, dg Dialer, ac *ActiveCall, transferorIn *diago.DialogServerSession, targetURI sip.Uri, dialOpts ConnectOpts, headers []sip.Header) error {
 	if ac == nil {
 		return fmt.Errorf("no active call")
 	}
@@ -344,7 +352,7 @@ func (b *BridgePair) CompleteTransfer(ctx context.Context, dg Dialer, ac *Active
 		return fmt.Errorf("no held party")
 	}
 
-	targetOut, err := dg.Invite(ctx, targetURI, diago.InviteOptions{Headers: headers})
+	targetOut, err := InviteOutLeg(ctx, dg, targetURI, dialOpts, diago.InviteOptions{Headers: headers})
 	if err != nil {
 		return err
 	}

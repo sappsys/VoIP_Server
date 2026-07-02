@@ -2,9 +2,21 @@
 bind_host = "0.0.0.0"
 bind_port = 5060
 transport = "udp"
-external_host = ""
+# LAN/WAN IP phones and RTP must use (required on multi-homed / Docker hosts).
+external_host = "192.168.1.100"
 realm = "voip.local"
 moh_dir = "assets/moh"
+# SIP OPTIONS keepalive to registered phones (seconds). Default 30.
+options_keepalive_seconds = 30
+# REGISTER expiry bounds (seconds).
+register_min_expiry = 60
+register_max_expiry = 3600
+# Keep the Contact host from the phone instead of rewriting private LAN IPs to the packet source.
+preserve_contact_host = false
+
+[logging]
+# Level: debug, info, warn, error
+level = "info"
 
 # Voice codecs offered in SDP (preference order, first = most preferred).
 # Supported: PCMU PCMA G722 G729 G723-63 G723-53 G726-32 G726-16 G726-24 G726-40

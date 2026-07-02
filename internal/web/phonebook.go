@@ -133,7 +133,8 @@ func (s *Server) handlePhonebook(w http.ResponseWriter, r *http.Request) {
 				field("Name", fmt.Sprintf(`<input name="name" placeholder="Contact name" required%s>`, valAttr(nameVal)))+
 				field("Number", fmt.Sprintf(`<input name="number" placeholder="101 or 302@host" required%s>`, valAttr(numberVal)))+
 				field("Label", fmt.Sprintf(`<input name="label" placeholder="label (optional)"%s>`, valAttr(labelVal)))+
-				formActions(fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" entry"))),
+				editFormActions(editing != nil, "/phonebook",
+					fmt.Sprintf(`<button type="submit">%s</button>`, html.EscapeString(editSubmitLabel(editing != nil)+" entry"))),
 		)))
 	s.render(w, r, content)
 }

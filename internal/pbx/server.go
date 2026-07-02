@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 
 	"github.com/emiago/diago"
@@ -58,10 +59,14 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 		ua.Close()
 		return nil, err
 	}
-	reg := registrar.New(cfg.Server.Realm, exts, log)
+	reg := registrar.New(cfg.Server.Realm, cfg.Server, exts, log)
 	reg.Attach(srv)
 
 	extHost := cfg.ExternalHost()
+	bindHost := cfg.SIPBindHost()
+	if bindHost != cfg.Server.BindHost {
+		log.Info("sip bind host", "configured", cfg.Server.BindHost, "using", bindHost, "reason", "external_host set while bind_host is all-interfaces")
+	}
 	voiceCodecs, err := mediacodecs.VoiceCodecs(cfg.Media.Codecs)
 	if err != nil {
 		ua.Close()
@@ -70,15 +75,17 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 	// Prefer our configured codec order in SDP answers.
 	diagomedia.SDPCodecPreferLocalOrder = 1
 
+	mediaIP := net.ParseIP(extHost)
 	dg := diago.NewDiago(ua,
 		diago.WithServer(srv),
 		diago.WithLogger(log),
 		diago.WithMediaConfig(diago.MediaConfig{Codecs: voiceCodecs}),
 		diago.WithTransport(diago.Transport{
-			Transport:    cfg.Server.Transport,
-			BindHost:     cfg.Server.BindHost,
-			BindPort:     cfg.Server.BindPort,
-			ExternalHost: extHost,
+			Transport:       cfg.Server.Transport,
+			BindHost:        bindHost,
+			BindPort:        cfg.Server.BindPort,
+			ExternalHost:    extHost,
+			MediaExternalIP: mediaIP,
 		}),
 	)
 
@@ -145,6 +152,11 @@ func (s *Server) ReloadConfig(cfg *config.Config) {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	client, err := sipgo.NewClient(s.ua)
+	if err != nil {
+		return err
+	}
+	s.reg.RunBackground(ctx, client)
 	return s.dg.Serve(ctx, s.handleInvite)
 }
 
@@ -185,6 +197,7 @@ func (s *Server) handleInvite(in *diago.DialogServerSession) {
 	dial := in.ToUser()
 	from := in.FromUser()
 	callerName := displayName(in.InviteRequest)
+	s.log.Debug("invite received", "from", from, "to", dial, "caller_registered", s.reg.IsRegistered(from))
 
 	// Complete attended transfer: dial target extension after *77.
 	if ac := s.registry.FindByExtension(from); ac != nil && ac.TransferReady {
@@ -327,12 +340,16 @@ func (s *Server) bridgeToExtension(ctx context.Context, in *diago.DialogServerSe
 			opts.Headers = call.OutboundHeaders(e.DisplayName, in.FromUser(), s.cfg.ExternalHost())
 		}
 	}
-	uri, ok := s.reg.ContactURI(ext)
+	uri, dest, transport, ok := s.reg.DialTarget(ext)
 	if !ok {
+		s.log.Warn("call to unregistered extension", "from", in.FromUser(), "to", ext)
 		_ = in.Respond(sip.StatusTemporarilyUnavailable, "Unregistered", nil)
 		return fmt.Errorf("unregistered")
 	}
+	s.log.Debug("bridge to extension", "from", in.FromUser(), "to", ext, "contact", uri.String(), "dest", dest)
 	opts.CalleeExt = ext
+	opts.DialDestination = dest
+	opts.DialTransport = transport
 	return s.bridge.Connect(ctx, s.inviteDialer(), in, uri, opts, s.mohDir())
 }
 

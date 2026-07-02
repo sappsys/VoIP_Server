@@ -51,11 +51,7 @@ func (h *Handler) Page(ctx context.Context, dg *diago.Diago, in *diago.DialogSer
 
 	headers := call.IntercomHeaders()
 	for _, ext := range members {
-		uri, ok := h.Reg.ContactURI(ext)
-		if !ok {
-			continue
-		}
-		out, err := dg.Invite(ctx, uri, diago.InviteOptions{Headers: headers})
+		out, err := call.InviteExtension(ctx, dg, h.Reg, ext, diago.InviteOptions{Headers: headers})
 		if err != nil {
 			continue
 		}

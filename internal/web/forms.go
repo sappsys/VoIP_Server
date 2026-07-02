@@ -92,6 +92,18 @@ func strategySelect(current string) string {
 		selectedAttr(current == "simultaneous"), selectedAttr(current == "sequential"))
 }
 
+func editFormActions(editing bool, listPath, submitButton string) string {
+	if editing {
+		return formActions(submitButton + cancelEditLink(listPath))
+	}
+	return formActions(submitButton)
+}
+
+func cancelEditLink(path string) string {
+	return fmt.Sprintf(` <a class="btn-secondary" href="%s#%s">Cancel</a>`,
+		html.EscapeString(path), editFormAnchor)
+}
+
 func editPanel(title, inner string) string {
 	var b strings.Builder
 	b.WriteString(`<section class="panel" id="`)

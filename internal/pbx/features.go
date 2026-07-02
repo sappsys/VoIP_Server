@@ -144,7 +144,7 @@ func (s *Server) handleParkRetrieve(ctx context.Context, in *diago.DialogServerS
 }
 
 func (s *Server) handleTransferComplete(ctx context.Context, in *diago.DialogServerSession, from string, ac *call.ActiveCall, target string) {
-	uri, ok := s.reg.ContactURI(target)
+	uri, dest, transport, ok := s.reg.DialTarget(target)
 	if !ok {
 		_ = in.Respond(sip.StatusTemporarilyUnavailable, "Unregistered", nil)
 		return
@@ -158,7 +158,8 @@ func (s *Server) handleTransferComplete(ctx context.Context, in *diago.DialogSer
 
 	host := s.cfg.ExternalHost()
 	headers := call.OutboundHeaders(displayName(in.InviteRequest), from, host)
-	if err := s.bridge.CompleteTransfer(ctx, s.inviteDialer(), ac, in, uri, headers); err != nil {
+	dialOpts := call.ConnectOpts{DialDestination: dest, DialTransport: transport}
+	if err := s.bridge.CompleteTransfer(ctx, s.inviteDialer(), ac, in, uri, dialOpts, headers); err != nil {
 		_ = in.Respond(sip.StatusTemporarilyUnavailable, "Transfer Failed", nil)
 		if s.log != nil {
 			s.log.Warn("transfer failed", "from", from, "target", target, "error", err)

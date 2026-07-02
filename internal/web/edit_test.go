@@ -58,6 +58,9 @@ func TestEditLinksOnAdminPages(t *testing.T) {
 		if !strings.Contains(body, `id="edit-form"`) {
 			t.Fatalf("%s missing edit form anchor", path)
 		}
+		if !strings.Contains(body, "Cancel</a>") {
+			t.Fatalf("%s missing cancel link when editing", path)
+		}
 		if !strings.Contains(body, "Edit</a>") {
 			t.Fatalf("%s missing edit link in list", path)
 		}

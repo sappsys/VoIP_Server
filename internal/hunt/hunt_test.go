@@ -14,7 +14,7 @@ func TestReachableMembers(t *testing.T) {
 		"102": {Extension: "102", Enabled: true},
 		"103": {Extension: "103", Enabled: true},
 	}
-	reg := registrar.New("test.local", exts, nil)
+	reg := registrar.New("test.local", config.ServerConfig{}, exts, nil)
 	reg.RegisterForTest("102", sip.Uri{User: "102", Host: "127.0.0.1", Port: 5060})
 
 	h := NewHandler(reg, nil, nil)

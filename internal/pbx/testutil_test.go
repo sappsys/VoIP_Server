@@ -83,7 +83,7 @@ func newTestServerLight(t *testing.T) (*Server, *store.Store, *mockDialer) {
 		Limits: config.LimitsConfig{MaxCalls: 50},
 	}
 
-	reg := registrar.New(cfg.Server.Realm, exts, nil)
+	reg := registrar.New(cfg.Server.Realm, cfg.Server, exts, nil)
 	reg.RegisterForTest("101", sip.Uri{User: "101", Host: "127.0.0.1", Port: 5060})
 	reg.RegisterForTest("102", sip.Uri{User: "102", Host: "127.0.0.1", Port: 5060})
 

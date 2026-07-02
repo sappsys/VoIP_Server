@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,14 +25,14 @@ func main() {
 		return
 	}
 
-	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	log.Info("starting VoIP PBX", "version", version.Version)
-
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
-		log.Error("load config", "error", err)
+		fmt.Fprintf(os.Stderr, "load config: %v\n", err)
 		os.Exit(1)
 	}
+
+	log := config.NewLogger(cfg.Logging)
+	log.Info("starting VoIP PBX", "version", version.Version, "log_level", cfg.Logging.Level)
 
 	cfgDir := filepath.Dir(*cfgPath)
 	if cfgDir == "." {
@@ -108,7 +107,7 @@ func main() {
 	}()
 
 	go func() {
-		log.Info("sip listening", "addr", cfg.Server.BindHost, "port", cfg.Server.BindPort)
+		log.Info("sip listening", "addr", cfg.SIPBindHost(), "port", cfg.Server.BindPort)
 		if err := pbxSrv.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Error("sip server", "error", err)
 			cancel()

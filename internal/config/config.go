@@ -11,6 +11,7 @@ import (
 
 type Config struct {
 	Server   ServerConfig   `toml:"server"`
+	Logging  LoggingConfig  `toml:"logging"`
 	Media    MediaConfig    `toml:"media"`
 	Limits   LimitsConfig   `toml:"limits"`
 	Web      WebConfig      `toml:"web"`
@@ -29,6 +30,14 @@ type ServerConfig struct {
 	Realm        string `toml:"realm"`
 	MOHDir       string `toml:"moh_dir"`
 	MOHFile      string `toml:"moh_file"` // deprecated: parent directory used when moh_dir is empty
+	// OptionsKeepaliveSeconds sends SIP OPTIONS to registered phones (0 = disabled).
+	OptionsKeepaliveSeconds int `toml:"options_keepalive_seconds"`
+	// RegisterMinExpiry rejects shorter REGISTER Expires values (seconds).
+	RegisterMinExpiry int `toml:"register_min_expiry"`
+	// RegisterMaxExpiry caps REGISTER Expires (seconds).
+	RegisterMaxExpiry int `toml:"register_max_expiry"`
+	// PreserveContactHost keeps the Contact host from the phone instead of rewriting private IPs to the packet source.
+	PreserveContactHost bool `toml:"preserve_contact_host"`
 }
 
 // MediaConfig controls SDP codec offers for SIP calls.
@@ -118,6 +127,18 @@ func setDefaults(cfg *Config) {
 	if cfg.Server.Realm == "" {
 		cfg.Server.Realm = "voip.local"
 	}
+	if cfg.Server.RegisterMinExpiry == 0 {
+		cfg.Server.RegisterMinExpiry = 60
+	}
+	if cfg.Server.RegisterMaxExpiry == 0 {
+		cfg.Server.RegisterMaxExpiry = 3600
+	}
+	if cfg.Server.OptionsKeepaliveSeconds == 0 {
+		cfg.Server.OptionsKeepaliveSeconds = 30
+	}
+	if cfg.Logging.Level == "" {
+		cfg.Logging.Level = "info"
+	}
 	if cfg.Server.MOHDir == "" {
 		if cfg.Server.MOHFile != "" {
 			cfg.Server.MOHDir = filepath.Dir(cfg.Server.MOHFile)
@@ -166,6 +187,9 @@ func setDefaults(cfg *Config) {
 func (c *Config) Validate() error {
 	if err := c.validateFeatures(); err != nil {
 		return err
+	}
+	if c.Server.RegisterMaxExpiry < c.Server.RegisterMinExpiry {
+		return fmt.Errorf("server.register_max_expiry must be >= register_min_expiry")
 	}
 	if len(c.Trunks) > 10 {
 		return fmt.Errorf("maximum 10 trunks allowed")

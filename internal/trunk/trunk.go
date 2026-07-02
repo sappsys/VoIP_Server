@@ -43,6 +43,9 @@ func (h *Handler) Outbound(ctx context.Context, dg call.Dialer, in *diago.Dialog
 		return fmt.Errorf("trunk prefix %s", prefix)
 	}
 	uri := parseTrunkURI(t.Server, rest)
+	if h.Log != nil {
+		h.Log.Debug("trunk outbound", "trunk", t.Name, "prefix", prefix, "dest", uri.String(), "from", opts.CallerExt)
+	}
 	opts.Username = t.Username
 	opts.Password = t.Password
 	if bp == nil {

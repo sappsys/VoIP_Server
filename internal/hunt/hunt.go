@@ -44,12 +44,8 @@ func (h *Handler) Run(ctx context.Context, dg Dialer, in *diago.DialogServerSess
 
 func (h *Handler) sequential(ctx context.Context, dg Dialer, in *diago.DialogServerSession, members []string, ringTimeout int, headers []sip.Header, opts call.ConnectOpts, mohPath string) error {
 	for _, ext := range members {
-		uri, ok := h.Reg.ContactURI(ext)
-		if !ok {
-			continue
-		}
 		dCtx, cancel := context.WithTimeout(ctx, time.Duration(ringTimeout)*time.Second)
-		out, err := dg.Invite(dCtx, uri, diago.InviteOptions{
+		out, err := call.InviteExtension(dCtx, dg, h.Reg, ext, diago.InviteOptions{
 			Originator: in,
 			Headers:    headers,
 		})
@@ -97,16 +93,12 @@ func (h *Handler) simultaneous(ctx context.Context, dg Dialer, in *diago.DialogS
 	defer cancel()
 
 	for _, ext := range members {
-		uri, ok := h.Reg.ContactURI(ext)
-		if !ok {
-			continue
-		}
 		wg.Add(1)
-		go func(u sip.Uri, member string) {
+		go func(member string) {
 			defer wg.Done()
 			dCtx, c := context.WithTimeout(ctx, 35*time.Second)
 			defer c()
-			out, err := dg.Invite(dCtx, u, diago.InviteOptions{
+			out, err := call.InviteExtension(dCtx, dg, h.Reg, member, diago.InviteOptions{
 				Originator: in,
 				Headers:    headers,
 			})
@@ -119,7 +111,7 @@ func (h *Handler) simultaneous(ctx context.Context, dg Dialer, in *diago.DialogS
 				out.Hangup(ctx)
 				out.Close()
 			}
-		}(uri, ext)
+		}(ext)
 	}
 
 	select {
