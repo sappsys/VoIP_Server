@@ -14,7 +14,7 @@ an `alpha` prerelease suffix.
 
 ### Added
 
-- Phone-initiated hold: holder hears dial tone, held party hears MOH on first press (Starface / unregistered caller path)
+- Phone-initiated hold: holder hears dial tone, held party hears MOH on first press (real IP phone / unregistered caller path)
 - PCM transcoding bridge with requirement tests for hold, transfer, conference, and mixed-codec calls
 - `REQUIREMENTS.md` traceability for hold, bridge, and signalling behaviour
 - Symmetric RTP (`RTPNAT`) for unregistered callers and NAT-learned media paths

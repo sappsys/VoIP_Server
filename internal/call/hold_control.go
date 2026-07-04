@@ -158,7 +158,7 @@ func (h *holdController) shouldLeaveOnPhoneUnhold(dm *diago.DialogMedia) bool {
 			return false
 		}
 		// Phone hold toggle off sends sendrecv. After our dial-tone sendonly leg is up
-		// (legHeld), treat sendrecv as release — not churn to reassert (Starface/111).
+		// (legHeld), treat sendrecv as release — not churn to reassert (phone hold toggle).
 		if legHeld {
 			return true
 		}
@@ -594,7 +594,7 @@ func (h *holdController) abortHoldEntry(reason string) {
 }
 
 // ensureBridgeAfterHoldAbort retries bridge restoration after a cancelled hold entry left
-// MOH torn down but legs or codecs still settling (real Starface / unregistered caller path).
+// MOH torn down but legs or codecs still settling (real IP phone / unregistered caller path).
 func (h *holdController) ensureBridgeAfterHoldAbort() {
 	if h == nil || h.ac == nil || h.b == nil {
 		return

@@ -132,7 +132,7 @@ func TestREQ_HOLD_SendrecvChurnBeforeDialToneLegReasserts(t *testing.T) {
 	}
 }
 
-// REQ-HOLD-5: legHeld + sendrecv is always phone release (matches Starface hold toggle).
+// REQ-HOLD-5: legHeld + sendrecv is always phone release (matches IP phone hold toggle).
 func TestREQ_HOLD_LegHeldSendrecvAlwaysLeaves(t *testing.T) {
 	ms := mediaSessionWithLocalDirection(t, sdp.ModeSendrecv)
 	in := testServerDialog("in")

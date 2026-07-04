@@ -158,7 +158,7 @@ func (h *holdController) enableHolderSendMedia(ctx context.Context, holderIsCall
 
 	// Phone hold: we answered recvonly to the phone's sendonly re-INVITE. A server Hold()
 	// re-INVITE races that transaction (491, multi-second retry) and still fails on some
-	// Starface/unregistered-caller paths. Override local direction so dial tone can flow
+	// real IP phone / unregistered-caller paths. Override local direction so dial tone can flow
 	// on the existing leg once the phone hold answer completes.
 	if phoneHold {
 		ms = liveMS()
@@ -227,7 +227,7 @@ func (h *holdController) enableHolderSendMedia(ctx context.Context, holderIsCall
 
 // enableHeldPartyMOHMedia prepares the held-party leg for MOH RTP injection.
 // Most phones stay on sendrecv when the remote party holds — inject MOH there without
-// a sendonly re-INVITE (Starface/110 rejects that and leaves the leg unsendable).
+// a sendonly re-INVITE (registered callee rejects that and leaves the leg unsendable).
 // Re-INVITE only when the leg is recvonly/inactive and cannot send.
 func (h *holdController) enableHeldPartyMOHMedia(ctx context.Context, heldOnOut bool) bool {
 	if testEnableHeldPartyMOHMedia != nil {
