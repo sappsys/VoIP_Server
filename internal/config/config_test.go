@@ -46,7 +46,7 @@ extensions_dir = "extensions"
 	if err := SaveExtension(extDir, ext); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadExtensions(extDir)
+	loaded, err := LoadExtensions(extDir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

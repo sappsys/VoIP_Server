@@ -3,6 +3,8 @@ package config
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/sappsys/VoIP_Server/internal/media/tones"
 )
 
 func TestSoundDefaults(t *testing.T) {
@@ -11,8 +13,8 @@ func TestSoundDefaults(t *testing.T) {
 	if s.Dir != defaultSoundsDir {
 		t.Fatalf("dir=%q", s.Dir)
 	}
-	if s.Busy != defaultSoundBusy {
-		t.Fatalf("busy=%q", s.Busy)
+	if s.Busy != "" {
+		t.Fatalf("busy should default empty (uses tones): %q", s.Busy)
 	}
 	if s.WrongNumber != defaultSoundWrongNumber {
 		t.Fatalf("wrong_number=%q", s.WrongNumber)
@@ -69,7 +71,16 @@ func TestLoadConfigSoundDefaults(t *testing.T) {
 	if cfg.Sounds.Dir != defaultSoundsDir {
 		t.Fatalf("sounds dir default not set: %q", cfg.Sounds.Dir)
 	}
-	if cfg.Sounds.Busy == "" || cfg.Sounds.WrongNumber == "" {
+	if cfg.Sounds.WrongNumber == "" {
 		t.Fatal("sound filenames not defaulted")
+	}
+	if cfg.Tones.Region != string(tones.RegionUK) {
+		t.Fatalf("tones region=%q", cfg.Tones.Region)
+	}
+	if cfg.Tones.BusySeconds != 5 {
+		t.Fatalf("busy_seconds=%d", cfg.Tones.BusySeconds)
+	}
+	if cfg.Limits.RingTimeoutSeconds != 30 {
+		t.Fatalf("ring_timeout=%d", cfg.Limits.RingTimeoutSeconds)
 	}
 }

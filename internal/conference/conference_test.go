@@ -2,8 +2,9 @@ package conference
 
 import (
 	"testing"
+	"time"
 
-	"github.com/emiago/diago"
+	"github.com/sappsys/VoIP_Server/internal/media/audiobridge"
 	"github.com/sappsys/VoIP_Server/internal/store"
 )
 
@@ -22,7 +23,7 @@ func TestRoomParticipantCount(t *testing.T) {
 }
 
 func TestReconcileMode(t *testing.T) {
-	room := &Room{Number: "600", Bridge: diago.NewBridgeMix()}
+	room := &Room{Number: "600", Mixer: audiobridge.NewConferenceMixer(nil)}
 	if n := len(room.aliveSessionsLocked()); n != 0 {
 		t.Fatalf("alive=%d", n)
 	}
@@ -33,6 +34,21 @@ func TestRoomMaxDefault(t *testing.T) {
 	room := m.room("601", 0)
 	if room.max != 16 {
 		t.Fatalf("default max=%d want 16", room.max)
+	}
+}
+
+func TestPinDigitTimeout(t *testing.T) {
+	deadline := time.Now().Add(35 * time.Second)
+	if d := pinDigitTimeout(deadline); d != pinPromptInterval {
+		t.Fatalf("got %v want %v", d, pinPromptInterval)
+	}
+	near := time.Now().Add(5 * time.Second)
+	if d := pinDigitTimeout(near); d > 5*time.Second || d <= 0 {
+		t.Fatalf("near deadline got %v", d)
+	}
+	past := time.Now().Add(-time.Second)
+	if d := pinDigitTimeout(past); d != 0 {
+		t.Fatalf("past deadline got %v", d)
 	}
 }
 

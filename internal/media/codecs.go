@@ -140,6 +140,35 @@ func SupportedVoiceCodecIDs() []string {
 	return ids
 }
 
+// TranscodeSupportedCodecIDs lists codecs with pure-Go encode/decode for bridging.
+// G.723 is negotiated in SDP but has no royalty-free pure-Go implementation yet.
+var TranscodeSupportedCodecIDs = []string{
+	CodecPCMU,
+	CodecPCMA,
+	CodecG722,
+	CodecG729,
+	CodecG72632,
+	CodecG72616,
+	CodecG72624,
+	CodecG72640,
+}
+
+// TranscodeSupported reports whether bridged calls can transcode this codec ID.
+func TranscodeSupported(id string) bool {
+	id = normalizeCodecID(id)
+	for _, supported := range TranscodeSupportedCodecIDs {
+		if id == supported {
+			return true
+		}
+	}
+	return false
+}
+
+// VoiceCodecTable exposes codec definitions for tests and tooling.
+func VoiceCodecTable() map[string]diagomedia.Codec {
+	return voiceCodecTable
+}
+
 func sortStrings(s []string) {
 	for i := 0; i < len(s); i++ {
 		for j := i + 1; j < len(s); j++ {

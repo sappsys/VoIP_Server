@@ -10,8 +10,13 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// DefaultMaxCallsPerExtension is applied when an extension omits max_simultaneous_calls
+// and when [limits] max_calls_per_extension is unset.
+const DefaultMaxCallsPerExtension = 5
+
 type Config struct {
 	Server   ServerConfig   `toml:"server"`
+	NAT      NATConfig      `toml:"nat"`
 	Logging  LoggingConfig  `toml:"logging"`
 	Media    MediaConfig    `toml:"media"`
 	Limits   LimitsConfig   `toml:"limits"`
@@ -20,14 +25,16 @@ type Config struct {
 	Paths    PathsConfig    `toml:"paths"`
 	Features FeaturesConfig `toml:"features"`
 	Sounds   SoundsConfig   `toml:"sounds"`
+	Tones    TonesConfig    `toml:"tones"`
 	Trunks   []TrunkConfig  `toml:"trunks"`
 	Users    []WebUser      `toml:"web.users"`
 }
 
 type ServerConfig struct {
-	BindHost     string `toml:"bind_host"`
-	BindPort     int    `toml:"bind_port"`
-	Transport    string `toml:"transport"`
+	BindHost     string   `toml:"bind_host"`
+	BindPort     int      `toml:"bind_port"`
+	Transport    string   `toml:"transport"`  // udp, tcp, or comma-separated (e.g. "udp,tcp")
+	Transports   []string `toml:"transports"` // optional list; overrides transport when set
 	ExternalHost string `toml:"external_host"`
 	Realm        string `toml:"realm"`
 	MOHDir       string `toml:"moh_dir"`
@@ -52,8 +59,11 @@ type MediaConfig struct {
 }
 
 type LimitsConfig struct {
-	MaxCalls      int `toml:"max_calls"`
-	MaxExtensions int `toml:"max_extensions"`
+	MaxCalls               int `toml:"max_calls"`
+	MaxExtensions          int `toml:"max_extensions"`
+	MaxCallsPerExtension   int `toml:"max_calls_per_extension"`
+	DialTimeoutSeconds     int `toml:"dial_timeout_seconds"`
+	RingTimeoutSeconds     int `toml:"ring_timeout_seconds"`
 }
 
 type WebConfig struct {
@@ -84,7 +94,7 @@ type PathsConfig struct {
 // (or absolute paths). Empty filename disables that prompt.
 type SoundsConfig struct {
 	Dir         string `toml:"dir"`
-	Busy        string `toml:"busy"`         // recipient busy, no call waiting
+	Busy        string `toml:"busy"`         // deprecated: busy uses [tones] region busy tone
 	WrongNumber string `toml:"wrong_number"` // invalid/unknown number dialed
 	ConfPIN     string `toml:"conf_pin"`     // prompt for conference PIN
 	ConfPINBad  string `toml:"conf_pin_bad"` // conference PIN incorrect
@@ -144,7 +154,7 @@ func setDefaults(cfg *Config) {
 	if cfg.Server.BindPort == 0 {
 		cfg.Server.BindPort = 5060
 	}
-	if cfg.Server.Transport == "" {
+	if cfg.Server.Transport == "" && len(cfg.Server.Transports) == 0 {
 		cfg.Server.Transport = "udp"
 	}
 	if cfg.Server.Realm == "" {
@@ -178,6 +188,15 @@ func setDefaults(cfg *Config) {
 	if cfg.Limits.MaxExtensions == 0 {
 		cfg.Limits.MaxExtensions = 400
 	}
+	if cfg.Limits.MaxCallsPerExtension == 0 {
+		cfg.Limits.MaxCallsPerExtension = DefaultMaxCallsPerExtension
+	}
+	if cfg.Limits.DialTimeoutSeconds == 0 {
+		cfg.Limits.DialTimeoutSeconds = 15
+	}
+	if cfg.Limits.RingTimeoutSeconds == 0 {
+		cfg.Limits.RingTimeoutSeconds = 30
+	}
 	if cfg.Web.Listen == "" {
 		cfg.Web.Listen = "0.0.0.0:7030"
 	}
@@ -198,6 +217,8 @@ func setDefaults(cfg *Config) {
 	}
 	setSoundDefaults(&cfg.Sounds)
 	setFeatureDefaults(&cfg.Features)
+	setNATDefaults(cfg)
+	cfg.Tones.ApplyDefaults()
 	if len(cfg.Users) == 0 {
 		cfg.Users = []WebUser{{Username: "admin", Password: "admin", Role: "admin"}}
 	}
@@ -218,7 +239,16 @@ func setDefaults(cfg *Config) {
 }
 
 func (c *Config) Validate() error {
+	if err := validateSIPTransports(c.Server.SIPTransports()); err != nil {
+		return fmt.Errorf("server: %w", err)
+	}
+	if err := c.validateNAT(); err != nil {
+		return err
+	}
 	if err := c.validateFeatures(); err != nil {
+		return err
+	}
+	if err := c.Tones.Validate(); err != nil {
 		return err
 	}
 	if c.Server.RegisterMaxExpiry < c.Server.RegisterMinExpiry {
@@ -263,7 +293,10 @@ func (c *Config) ResolvePath(rel string) string {
 	return filepath.Join(filepath.Dir(c.Database.Path), "..", rel)
 }
 
-func LoadExtensions(dir string) (map[string]*Extension, error) {
+func LoadExtensions(dir string, defaultMaxSimCalls int) (map[string]*Extension, error) {
+	if defaultMaxSimCalls <= 0 {
+		defaultMaxSimCalls = DefaultMaxCallsPerExtension
+	}
 	out := make(map[string]*Extension)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -289,7 +322,7 @@ func LoadExtensions(dir string) (map[string]*Extension, error) {
 			return nil, fmt.Errorf("%s: missing extension", path)
 		}
 		if ext.MaxSimultaneousCalls == 0 {
-			ext.MaxSimultaneousCalls = 4
+			ext.MaxSimultaneousCalls = defaultMaxSimCalls
 		}
 		if ext.DisplayName == "" {
 			ext.DisplayName = ext.Extension

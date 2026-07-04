@@ -79,7 +79,7 @@ func main() {
 		_ = st.UpsertWebUser(u.Username, hash, role)
 	}
 
-	exts, err := config.LoadExtensions(extDir)
+	exts, err := config.LoadExtensions(extDir, cfg.Limits.MaxCallsPerExtension)
 	if err != nil {
 		log.Error("load extensions", "error", err)
 		os.Exit(1)
@@ -107,7 +107,13 @@ func main() {
 	}()
 
 	go func() {
-		log.Info("sip listening", "addr", cfg.SIPBindHost(), "port", cfg.Server.BindPort)
+		log.Info("sip listening", "addr", cfg.SIPBindHost(), "port", cfg.Server.BindPort, "transports", cfg.Server.SIPTransports())
+		if cfg.NAT.SIPProxyEnabled {
+			log.Info("sip nat proxy", "port", cfg.NAT.SIPProxyPort)
+		}
+		if cfg.NAT.STUNEnabled {
+			log.Info("stun enabled", "addr", cfg.STUNBindHost(), "port", cfg.NAT.STUNPort)
+		}
 		if err := pbxSrv.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Error("sip server", "error", err)
 			cancel()

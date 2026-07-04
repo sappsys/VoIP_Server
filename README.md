@@ -1,6 +1,6 @@
 # VoIP PBX Server
 
-**Version: v0.1.4alpha** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+**Version: v0.1.5alpha** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 Go SIP PBX using [sipgo](https://github.com/emiago/sipgo) and [diago](https://github.com/emiago/diago).
 
@@ -103,7 +103,7 @@ Values may be written with or without `*`. Codes must be unique. Reload via web 
 | `password` | SIP digest password (required) |
 | `enabled` | Allow registration and calls (default true) |
 | `call_waiting` | Allow one extra call when at `max_simultaneous_calls` |
-| `max_simultaneous_calls` | Per-extension active call limit (default 4) |
+| `max_simultaneous_calls` | Per-extension active call limit (default from `[limits] max_calls_per_extension`, 5) |
 | `video_enabled` | Offer H.264 video passthrough on calls |
 | `voicemail` | Reserved for future use |
 | `dnd` | Do not disturb (usually toggled via `*78` / `*79`) |
@@ -213,4 +213,25 @@ points at the binary for the current host.
 
 ## systemd
 
-See [deploy/voip-server.service](deploy/voip-server.service).
+Deploy to `/opt/voip-server` and manage the service:
+
+```bash
+sudo ./deploy/deploy.sh install      # build, install, enable, start
+sudo ./deploy/deploy.sh update       # stop, replace binary, start
+sudo ./deploy/deploy.sh start
+sudo ./deploy/deploy.sh stop
+sudo ./deploy/deploy.sh restart
+sudo ./deploy/deploy.sh status
+```
+
+`install` copies assets and creates `config.toml` from `config.example.toml` only
+when missing (upgrades keep your config, database, and extensions).
+
+```bash
+git pull
+sudo ./deploy/deploy.sh update       # quick binary-only upgrade
+# or: sudo ./deploy/deploy.sh install   # full upgrade (assets, unit, etc.)
+```
+
+Install options: `--no-build`, `--binary PATH`, `--no-start`, `--install-dir PATH`.
+See `./deploy/deploy.sh --help`.

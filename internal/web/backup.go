@@ -139,7 +139,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	s.cfg = cfg
 	if s.pbx != nil {
 		s.pbx.ReloadConfig(cfg)
-		exts, _ := config.LoadExtensions(s.extDir)
+		exts, _ := config.LoadExtensions(s.extDir, s.cfg.Limits.MaxCallsPerExtension)
 		s.pbx.ReloadExtensions(exts)
 	}
 	redirectTo(w, r, "/backup?restored=1")

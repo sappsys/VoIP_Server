@@ -1,7 +1,10 @@
 [server]
 bind_host = "0.0.0.0"
 bind_port = 5060
+# Signaling transport(s): udp, tcp, or both — same bind_port for each.
 transport = "udp"
+# transports = ["udp", "tcp"]
+# Or: transport = "udp,tcp"
 # LAN/WAN IP phones and RTP must use (required on multi-homed / Docker hosts).
 external_host = "192.168.1.100"
 realm = "voip.local"
@@ -16,12 +19,22 @@ register_max_expiry = 3600
 # Keep the Contact host from the phone instead of rewriting private LAN IPs to the packet source.
 preserve_contact_host = false
 
+[nat]
+# STUN server (UDP) — clients discover their public reflexive address for NAT traversal.
+stun_enabled = false
+stun_bind_host = "0.0.0.0"
+stun_port = 3478
+# Optional second SIP listen port for NAT clients / dedicated firewall rules.
+sip_proxy_enabled = false
+sip_proxy_port = 5061
+
 [logging]
 # Level: debug, info, warn, error
 level = "info"
 
 # Voice codecs offered in SDP (preference order, first = most preferred).
-# Supported: PCMU PCMA G722 G729 G723-63 G723-53 G726-32 G726-16 G726-24 G726-40
+# SDP negotiation: PCMU PCMA G722 G729 G723-63 G723-53 G726-32 G726-16 G726-24 G726-40
+# Bridged transcoding (pure Go): PCMU PCMA G722 G729 G726-* — G.723 is offer-only until a codec is added.
 # Omit to use the full default set. telephone-event (DTMF) is added automatically.
 [media]
 codecs = ["PCMU", "PCMA", "G722", "G729", "G723-63", "G723-53", "G726-32", "G726-16", "G726-24", "G726-40"]
@@ -29,6 +42,9 @@ codecs = ["PCMU", "PCMA", "G722", "G729", "G723-63", "G723-53", "G726-32", "G726
 [limits]
 max_calls = 200
 max_extensions = 400
+max_calls_per_extension = 5
+dial_timeout_seconds = 15
+ring_timeout_seconds = 30
 
 [web]
 listen = "0.0.0.0:7030"
@@ -44,11 +60,21 @@ extensions_dir = "extensions"
 # The database-backed /phonebook/directory.xml is always available.
 phonebook_dir = "phonebook"
 
+# Regional signalling tones (country-specific).
+# region: uk (default) | eu | usa
+#   uk  — dial: 350+450 Hz continuous; ring: 400+450 Hz double-ring; busy: 400 Hz
+#   eu  — dial/ring/busy: 425 Hz (continental)
+#   usa — dial: 350+440 Hz; ring: 440+480 Hz; busy: 480+620 Hz
+# busy_seconds: how long busy tone plays before hangup (default 5)
+[tones]
+region = "uk"
+busy_seconds = 5
+
 # Voice prompts played to callers. Files are relative to `dir` (or absolute).
 # Leave a value empty ("") to disable that prompt and fall back to a SIP status.
 [sounds]
 dir = "assets/sounds"
-busy = "is-curntly-busy.wav"                 # recipient busy, no call waiting
+# busy is generated from [tones] — not a WAV file
 wrong_number = "you-dialed-wrong-number.wav" # invalid/unknown number dialed
 conf_pin = "confbridge-pin.wav"              # ask for conference PIN
 conf_pin_bad = "confbridge-pin-bad.wav"      # wrong PIN (then re-request)

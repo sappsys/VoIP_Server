@@ -224,7 +224,7 @@ func (h *Handler) pingTrunkOptions(ctx context.Context, client *sipgo.Client, t 
 // traverse the same NAT path as outbound INVITE/REGISTER traffic.
 func appendNATContact(req *sip.Request, cfg *config.Config, transport string) {
 	if transport == "" {
-		transport = cfg.Server.Transport
+		transport = cfg.Server.DefaultSIPTransport()
 	}
 	if transport == "" {
 		transport = "udp"

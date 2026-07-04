@@ -1,13 +1,25 @@
 [Unit]
 Description=VoIP PBX Server
-After=network.target
+Documentation=https://github.com/sappsys/VoIP_Server
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=voip-server
+Group=voip-server
 WorkingDirectory=/opt/voip-server
 ExecStart=/opt/voip-server/voip-server -config /opt/voip-server/config.toml
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=30
+
+# Hardening (ReadWritePaths must include all runtime writes under WorkingDirectory)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/voip-server
 
 [Install]
 WantedBy=multi-user.target

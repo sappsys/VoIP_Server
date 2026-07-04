@@ -155,8 +155,8 @@ cp data/pbx.db data/pbx.db.bak
 
 | Limit | Default |
 |-------|---------|
-| Max concurrent calls | 200 |
+| Max concurrent calls | 200 (system-wide `[limits] max_calls`) |
 | Max extensions | 400 |
-| Per-extension calls | 4 (configurable) |
+| Per-extension calls | 5 (default via `[limits] max_calls_per_extension`; override per extension) |
 
 Adjust in `config.toml` `[limits]` and per-extension `max_simultaneous_calls`.

@@ -109,7 +109,7 @@ func (s *Server) renderWithHead(w http.ResponseWriter, r *http.Request, content,
 }
 
 func (s *Server) loadExtensions() (map[string]*config.Extension, error) {
-	return config.LoadExtensions(s.extDir)
+	return config.LoadExtensions(s.extDir, s.cfg.Limits.MaxCallsPerExtension)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +207,7 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 	}
 	enabled := editing == nil || editing.Enabled
 	cw := editing == nil || editing.CallWaiting
-	maxCalls := "4"
+	maxCalls := fmt.Sprintf("%d", config.DefaultMaxCallsPerExtension)
 	if editing != nil && editing.MaxSimultaneousCalls > 0 {
 		maxCalls = fmt.Sprintf("%d", editing.MaxSimultaneousCalls)
 	}
@@ -223,7 +223,7 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 			field("Extension", fmt.Sprintf(`<input name="extension" placeholder="101" required%s%s>`, valAttr(extVal), extAttrs))+
 				field("Display name", fmt.Sprintf(`<input name="display_name" placeholder="Name"%s>`, valAttr(nameVal)))+
 				field("Password", fmt.Sprintf(`<input name="password" placeholder="%s"%s>`, html.EscapeString(passPlaceholder), passRequired))+
-				field("Max simultaneous calls", fmt.Sprintf(`<input name="max_simultaneous_calls" placeholder="4"%s>`, valAttr(maxCalls)))+
+				field("Max simultaneous calls", fmt.Sprintf(`<input name="max_simultaneous_calls" placeholder="%d"%s>`, config.DefaultMaxCallsPerExtension, valAttr(maxCalls)))+
 				checkField("Enabled", fmt.Sprintf(`<input type="checkbox" name="enabled" value="1"%s>`, checkedAttr(enabled)))+
 				checkField("Call waiting", fmt.Sprintf(`<input type="checkbox" name="call_waiting" value="1"%s>`, checkedAttr(cw)))+
 				editFormActions(editing != nil, "/extensions",
@@ -236,8 +236,11 @@ func (s *Server) handleExtensionSave(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) || !s.requireAdmin(w, r) {
 		return
 	}
-	max := 4
+	max := s.cfg.Limits.MaxCallsPerExtension
 	fmt.Sscan(r.FormValue("max_simultaneous_calls"), &max)
+	if max <= 0 {
+		max = config.DefaultMaxCallsPerExtension
+	}
 	ext := &config.Extension{
 		Extension:            r.FormValue("extension"),
 		DisplayName:          r.FormValue("display_name"),

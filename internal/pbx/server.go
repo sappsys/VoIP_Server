@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/emiago/diago"
@@ -16,7 +17,9 @@ import (
 	"github.com/sappsys/VoIP_Server/internal/config"
 	"github.com/sappsys/VoIP_Server/internal/hunt"
 	mediacodecs "github.com/sappsys/VoIP_Server/internal/media"
+	"github.com/sappsys/VoIP_Server/internal/media/tones"
 	"github.com/sappsys/VoIP_Server/internal/message"
+	"github.com/sappsys/VoIP_Server/internal/nat"
 	"github.com/sappsys/VoIP_Server/internal/paging"
 	"github.com/sappsys/VoIP_Server/internal/presence"
 	"github.com/sappsys/VoIP_Server/internal/registrar"
@@ -78,22 +81,31 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 		ua.Close()
 		return nil, fmt.Errorf("media codecs: %w", err)
 	}
+	call.SetDefaultVoiceCodecs(voiceCodecs)
+	toneProfile, err := cfg.Tones.Profile()
+	if err != nil {
+		ua.Close()
+		return nil, fmt.Errorf("tones: %w", err)
+	}
+	tones.SetDefaultProfile(toneProfile)
 	// Prefer our configured codec order in SDP answers.
 	diagomedia.SDPCodecPreferLocalOrder = 1
 
 	mediaIP := net.ParseIP(extHost)
-	dg := diago.NewDiago(ua,
+	dgOpts := []diago.DiagoOption{
 		diago.WithServer(srv),
 		diago.WithLogger(log),
-		diago.WithMediaConfig(diago.MediaConfig{Codecs: voiceCodecs}),
-		diago.WithTransport(diago.Transport{
-			Transport:       cfg.Server.Transport,
-			BindHost:        bindHost,
-			BindPort:        cfg.Server.BindPort,
-			ExternalHost:    extHost,
-			MediaExternalIP: mediaIP,
+		diago.WithMediaConfig(diago.MediaConfig{
+			Codecs: voiceCodecs,
+			RTPNAT: diagomedia.RTPNATSymetric,
 		}),
-	)
+	}
+	dgOpts = appendSIPTransports(dgOpts, cfg, bindHost, extHost, mediaIP, cfg.Server.BindPort)
+	if cfg.NAT.SIPProxyEnabled {
+		log.Info("sip nat proxy enabled", "port", cfg.NAT.SIPProxyPort, "transports", cfg.Server.SIPTransports())
+		dgOpts = appendSIPTransports(dgOpts, cfg, bindHost, extHost, mediaIP, cfg.NAT.SIPProxyPort)
+	}
+	dg := diago.NewDiago(ua, dgOpts...)
 	pres := presence.New(reg, exts, cfg.Features.FeatureCodes(), extHost, log)
 	pres.Attach(srv)
 
@@ -104,7 +116,7 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 
 	registry := call.NewRegistry()
 	parkLot := call.NewParkLot()
-	bridge := call.BridgePair{Log: log, Registry: registry}
+	bridge := call.BridgePair{Log: log, Registry: registry, Tones: toneProfile}
 	bridge.MOHDir = mohDir
 
 	s := &Server{
@@ -117,10 +129,10 @@ func New(cfg *config.Config, cfgDir, extDir string, exts map[string]*config.Exte
 		calls:    call.NewManager(cfg.Limits.MaxCalls),
 		registry: registry,
 		park:     parkLot,
-		hunt:     hunt.NewHandler(reg, log, &bridge),
+		hunt:     hunt.NewHandler(reg, log, &bridge, cfg.Limits.DialTimeoutSeconds),
 		conf:     conference.NewManager(log),
 		trunk:    trunk.NewHandler(st, reg, cfg, log),
-		paging:   paging.NewHandler(reg, log),
+		paging:   paging.NewHandler(reg, log, cfg.Limits.DialTimeoutSeconds),
 		msgs:     msgs,
 		presence: pres,
 		bridge:   bridge,
@@ -174,7 +186,7 @@ func (s *Server) ReloadConfig(cfg *config.Config) {
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	client, err := sipgo.NewClient(s.ua)
+	client, err := s.signalClient()
 	if err != nil {
 		return err
 	}
@@ -186,7 +198,49 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.presence.RunBackground(ctx)
 	s.reg.RunBackground(ctx, client)
 	s.trunk.RunBackground(ctx, s.dg, s.ua)
+	if s.cfg.NAT.STUNEnabled {
+		go func() {
+			stunSrv := &nat.STUNServer{Log: s.log}
+			if err := stunSrv.Run(ctx, s.cfg.STUNBindHost(), s.cfg.NAT.STUNPort); err != nil && ctx.Err() == nil {
+				s.log.Error("stun server", "error", err)
+			}
+		}()
+	}
 	return s.dg.Serve(ctx, s.handleInvite)
+}
+
+func appendSIPTransports(opts []diago.DiagoOption, cfg *config.Config, bindHost, extHost string, mediaIP net.IP, port int) []diago.DiagoOption {
+	for _, tr := range cfg.Server.SIPTransports() {
+		opts = append(opts, diago.WithTransport(diago.Transport{
+			Transport:       tr,
+			BindHost:        bindHost,
+			BindPort:        port,
+			ExternalHost:    extHost,
+			MediaExternalIP: mediaIP,
+		}))
+	}
+	return opts
+}
+
+func (s *Server) signalClient() (*sipgo.Client, error) {
+	bindHost := s.cfg.SIPBindHost()
+	bindPort := s.cfg.Server.BindPort
+	if bindPort <= 0 {
+		bindPort = 5060
+	}
+	extHost := s.cfg.ExternalHost()
+	opts := []sipgo.ClientOption{sipgo.WithClientNAT()}
+	if s.log != nil {
+		opts = append(opts, sipgo.WithClientLogger(s.log))
+	}
+	if bindHost != "" {
+		opts = append(opts, sipgo.WithClientConnectionAddr(net.JoinHostPort(bindHost, strconv.Itoa(bindPort))))
+	}
+	if extHost != "" && extHost != bindHost {
+		opts = append(opts, sipgo.WithClientHostname(extHost))
+		opts = append(opts, sipgo.WithClientPort(bindPort))
+	}
+	return sipgo.NewClient(s.ua, opts...)
 }
 
 func (s *Server) Close() error {
@@ -207,6 +261,14 @@ func (s *Server) soundPath(filename string) string {
 	return s.cfg.Sounds.SoundPath(s.cfgDir, filename)
 }
 
+func (s *Server) toneProfile() tones.Profile {
+	p, err := s.cfg.Tones.Profile()
+	if err != nil {
+		return tones.DefaultProfile()
+	}
+	return p
+}
+
 func (s *Server) connectOpts(from, to string) call.ConnectOpts {
 	video := false
 	if e, ok := s.exts[from]; ok && e.VideoEnabled {
@@ -216,10 +278,12 @@ func (s *Server) connectOpts(from, to string) call.ConnectOpts {
 		video = true
 	}
 	return call.ConnectOpts{
-		VideoEnabled: video,
-		ExternalIP:   s.cfg.ExternalHost(),
-		CallerExt:    from,
-		CalleeExt:    to,
+		VideoEnabled:         video,
+		ExternalIP:           s.cfg.ExternalHost(),
+		CallerExt:            from,
+		CalleeExt:            to,
+		DialTimeoutSeconds:   s.cfg.Limits.DialTimeoutSeconds,
+		RingTimeoutSeconds:   s.cfg.Limits.RingTimeoutSeconds,
 	}
 }
 
@@ -233,7 +297,7 @@ func (s *Server) handleInvite(in *diago.DialogServerSession) {
 	callerName := displayName(in.InviteRequest)
 	s.log.Debug("invite received", "from", from, "to", dial, "caller_registered", s.reg.IsRegistered(from))
 
-	// Complete attended transfer: dial target extension after *77.
+	// Complete attended transfer: dial target extension after *77 (not phone-hold consult).
 	if ac := s.registry.FindByExtension(from); ac != nil && ac.TransferReady {
 		if r := router.RouteDial(dial, s.features); r.Kind == router.KindExtension {
 			s.handleTransferComplete(ctx, in, from, ac, r.Target)
@@ -241,9 +305,16 @@ func (s *Server) handleInvite(in *diago.DialogServerSession) {
 		}
 	}
 
-	// Link consult calls for attended transfer completion.
-	if existing := s.registry.ByExtension(from); existing != nil && existing.In != nil && existing.In.ID != in.ID {
-		s.registry.SetConsult(from, in)
+	// Link consult calls while a call is on hold or transfer is armed.
+	if existing := s.registry.FindByExtension(from); existing != nil {
+		holdActive, _ := existing.HoldSnapshot()
+		if holdActive || existing.TransferReady {
+			if existing.In != nil && existing.In.ID != in.ID {
+				s.registry.SetConsult(from, in)
+			} else if holdActive && from == existing.CalleeExt {
+				s.registry.SetConsult(from, in)
+			}
+		}
 	}
 
 	// Inbound from external trunk (caller not a registered extension)
@@ -273,11 +344,7 @@ func (s *Server) handleInvite(in *diago.DialogServerSession) {
 	sess, err := s.calls.TryAcquire(in.ID, from, dial, callerName, s.exts)
 	if err != nil {
 		s.log.Debug("call rejected busy", "from", from, "to", dial, "error", err)
-		if p := s.soundPath(s.cfg.Sounds.Busy); p != "" {
-			call.AnswerAndPrompt(ctx, in, p, s.log)
-		} else {
-			_ = in.Respond(sip.StatusBusyHere, "Busy Here", nil)
-		}
+		call.AnswerAndPlayBusy(ctx, in, s.toneProfile(), s.log)
 		return
 	}
 	defer s.calls.Release(in.ID)
@@ -455,6 +522,43 @@ func (s *Server) handlePaging(ctx context.Context, in *diago.DialogServerSession
 
 func (s *Server) Stats() string {
 	return fmt.Sprintf("active_calls=%d registered=%d", s.calls.Active(), len(s.reg.RegisteredExtensions()))
+}
+
+// ConferenceParticipants returns the number of admitted participants in the
+// conference room with the given number (0 if the room is empty/absent).
+func (s *Server) ConferenceParticipants(number string) int {
+	return s.conf.Participants(number)
+}
+
+// BridgedRelayBytes returns PCM bridge relay counters for an active two-party call.
+func (s *Server) BridgedRelayBytes(callerExt, calleeExt string) (callerToCallee, calleeToCaller int64, ok bool) {
+	ac := s.registry.FindByExtension(callerExt)
+	if ac == nil {
+		return 0, 0, false
+	}
+	if (ac.CallerExt != callerExt || ac.CalleeExt != calleeExt) &&
+		(ac.CallerExt != calleeExt || ac.CalleeExt != callerExt) {
+		return 0, 0, false
+	}
+	toCallee, toCaller := ac.RelayBytesSnapshot()
+	return toCallee, toCaller, true
+}
+
+// HoldMOHBytesSent returns MOH bytes the server has sent on a held call (REQ-HOLD-2).
+func (s *Server) HoldMOHBytesSent(callerExt, calleeExt string) (bytes int64, ok bool) {
+	ac := s.registry.FindByExtension(callerExt)
+	if ac == nil {
+		return 0, false
+	}
+	if (ac.CallerExt != callerExt || ac.CalleeExt != calleeExt) &&
+		(ac.CallerExt != calleeExt || ac.CalleeExt != callerExt) {
+		return 0, false
+	}
+	holdActive, _ := ac.HoldSnapshot()
+	if !holdActive {
+		return 0, false
+	}
+	return ac.HoldMOHBytesSent(), true
 }
 
 func (s *Server) RegisteredExtensions() []string {

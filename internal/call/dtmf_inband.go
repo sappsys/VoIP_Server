@@ -179,6 +179,7 @@ func secondBestMagnitude(mags []float64) float64 {
 type rfc2833Decoder struct {
 	lastTimestamp uint32
 	lastEv        diagomedia.DTMFEvent
+	emitted       bool
 }
 
 func (r *rfc2833Decoder) processPayload(payload []byte, marker bool) (rune, bool) {
@@ -188,18 +189,37 @@ func (r *rfc2833Decoder) processPayload(payload []byte, marker bool) (rune, bool
 	}
 
 	if ev.EndOfEvent {
+		if r.emitted {
+			return 0, false
+		}
 		if r.lastEv.Duration == 0 {
 			return 0, false
 		}
 		if r.lastEv.Event != ev.Event {
 			return 0, false
 		}
+		digit := diagomedia.DTMFToRune(ev.Event)
 		r.lastEv = diagomedia.DTMFEvent{}
-		return diagomedia.DTMFToRune(ev.Event), true
+		r.emitted = true
+		if digit != 0 {
+			return digit, true
+		}
+		return 0, false
 	}
 
-	if !marker {
+	if marker || r.lastEv.Event != ev.Event {
+		r.lastEv = ev
+		r.emitted = false
 		return 0, false
+	}
+
+	// Some endpoints never set the end bit; accept after ~20 ms of tone.
+	if !r.emitted && ev.Duration >= 320 && r.lastEv.Event == ev.Event {
+		digit := diagomedia.DTMFToRune(ev.Event)
+		r.emitted = true
+		if digit != 0 {
+			return digit, true
+		}
 	}
 	r.lastEv = ev
 	return 0, false

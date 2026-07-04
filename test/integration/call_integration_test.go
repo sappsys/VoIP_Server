@@ -9,50 +9,10 @@ import (
 	"time"
 
 	"github.com/emiago/diago"
-	"github.com/emiago/sipgo"
-	"github.com/emiago/sipgo/sip"
 	"github.com/sappsys/VoIP_Server/internal/config"
 	"github.com/sappsys/VoIP_Server/internal/pbx"
 	"github.com/sappsys/VoIP_Server/internal/store"
 )
-
-func registerExtension(t *testing.T, dg *diago.Diago, port int, ext, password string) {
-	t.Helper()
-	ctx := context.Background()
-	recipient := sip.Uri{User: ext, Host: "127.0.0.1", Port: port}
-	rtx, err := dg.RegisterTransaction(ctx, recipient, diago.RegisterOptions{
-		Username: ext,
-		Password: password,
-		Expiry:   120 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("register tx %s: %v", ext, err)
-	}
-	if err := rtx.Register(ctx); err != nil {
-		t.Fatalf("register %s: %v", ext, err)
-	}
-}
-
-func newPhoneUA(t *testing.T) *diago.Diago {
-	t.Helper()
-	ua, err := sipgo.NewUA()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ua.Close() })
-	client, err := sipgo.NewClient(ua, sipgo.WithClientHostname("127.0.0.1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return diago.NewDiago(ua,
-		diago.WithClient(client),
-		diago.WithTransport(diago.Transport{
-			Transport: "udp",
-			BindHost:  "127.0.0.1",
-			BindPort:  0,
-		}),
-	)
-}
 
 func startTestPBXTwoExt(t *testing.T) (int, func()) {
 	t.Helper()
@@ -116,28 +76,15 @@ func TestExtensionToExtensionInvite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	phone101 := newPhoneUA(t)
-	phone102 := newPhoneUA(t)
-	registerExtension(t, phone101, port, "101", "secret")
-	registerExtension(t, phone102, port, "102", "secret")
+	phone101 := newHandset(t, port, "101", "secret")
+	phone102 := newHandset(t, port, "102", "secret")
+	phone101.register()
+	phone102.register()
 
-	answered := make(chan struct{}, 1)
-	go func() {
-		_ = phone102.Serve(ctx, func(in *diago.DialogServerSession) {
-			_ = in.Trying()
-			_ = in.Ringing()
-			if err := in.Answer(); err != nil {
-				t.Errorf("answer: %v", err)
-				return
-			}
-			answered <- struct{}{}
-			<-in.Context().Done()
-		})
-	}()
-	time.Sleep(100 * time.Millisecond)
+	answered := make(chan *diago.DialogServerSession, 1)
+	phone102.serveAnswer(ctx, answered, true)
 
-	recipient := sip.Uri{User: "102", Host: "127.0.0.1", Port: port}
-	out, err := phone101.Invite(ctx, recipient, diago.InviteOptions{})
+	out, err := phone101.invite(ctx, "102", nil)
 	if err != nil {
 		t.Fatalf("invite 101->102 via PBX: %v", err)
 	}

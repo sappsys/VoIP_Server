@@ -135,7 +135,7 @@ func (s *Server) handleParkRetrieve(ctx context.Context, in *diago.DialogServerS
 	}
 	sess, err := s.calls.TryAcquire(in.ID, from, s.features.ParkRetrieve+slot, displayName(in.InviteRequest), s.exts)
 	if err != nil {
-		_ = in.Respond(sip.StatusBusyHere, "Busy Here", nil)
+		call.AnswerAndPlayBusy(ctx, in, s.toneProfile(), s.log)
 		pc.Release()
 		return
 	}
@@ -161,36 +161,47 @@ func (s *Server) handleTransferComplete(ctx context.Context, in *diago.DialogSer
 		_ = in.Respond(sip.StatusTemporarilyUnavailable, "Unregistered", nil)
 		return
 	}
-	sess, err := s.calls.TryAcquire(in.ID, from, target, displayName(in.InviteRequest), s.exts)
-	if err != nil {
-		_ = in.Respond(sip.StatusBusyHere, "Busy Here", nil)
+	if _, err := s.calls.TryAcquire(in.ID, from, target, displayName(in.InviteRequest), s.exts); err != nil {
+		call.AnswerAndPlayBusy(ctx, in, s.toneProfile(), s.log)
 		return
 	}
-	defer s.calls.Release(in.ID)
 
 	host := s.cfg.ExternalHost()
 	headers := call.OutboundHeaders(displayName(in.InviteRequest), from, host)
-	dialOpts := call.ConnectOpts{DialDestination: dest, DialTransport: transport}
-	if err := s.bridge.CompleteTransfer(ctx, s.inviteDialer(), ac, in, uri, dialOpts, headers); err != nil {
-		_ = in.Respond(sip.StatusTemporarilyUnavailable, "Transfer Failed", nil)
-		if s.log != nil {
-			s.log.Warn("transfer failed", "from", from, "target", target, "error", err)
-		}
+	dialOpts := s.connectOpts(from, target)
+	dialOpts.DialDestination = dest
+	dialOpts.DialTransport = transport
+	dialOpts.Headers = headers
+
+	// Answer the transferor's feature dial immediately so the handset INVITE completes.
+	// CompleteTransfer runs asynchronously — it blocks on waitDialogPair until the
+	// bridged call ends and must not stall the SIP transaction goroutine.
+	in.Trying()
+	if err := call.AnswerSession(in); err != nil {
+		s.calls.Release(in.ID)
 		return
 	}
-	_ = sess
-	if s.log != nil {
-		s.log.Info("transfer complete", "from", from, "target", target)
-	}
+
+	go func() {
+		defer s.calls.Release(in.ID)
+		// Do not use in.Context(): the feature dial leg is short-lived and canceling
+		// it would abort outbound INVITE to the transfer target mid-flight.
+		transferCtx := context.Background()
+		if err := s.bridge.CompleteTransfer(transferCtx, s.inviteDialer(), ac, in, uri, dialOpts, headers); err != nil {
+			if s.log != nil {
+				s.log.Warn("transfer failed", "from", from, "target", target, "error", err)
+			}
+			in.Hangup(context.Background())
+			return
+		}
+		if s.log != nil {
+			s.log.Info("transfer complete", "from", from, "target", target)
+		}
+	}()
 }
 
 func (s *Server) holdOtherParty(ctx context.Context, ac *call.ActiveCall, parker string) {
-	mohDir := s.mohDir()
-	if parker == ac.CallerExt && ac.Out != nil {
-		go call.PlayMOHToClient(ctx, ac.Out, mohDir, s.log)
-	} else if parker == ac.CalleeExt && ac.In != nil {
-		go call.PlayMOHToServer(ctx, ac.In, mohDir, s.log)
-	}
+	ac.HoldRemoteWithMOH(ctx, parker, s.mohDir(), s.log)
 }
 
 func (s *Server) dialResolved(ctx context.Context, in *diago.DialogServerSession, from, dial, callerName string) {
@@ -207,7 +218,7 @@ func (s *Server) dialResolvedWithOpts(ctx context.Context, in *diago.DialogServe
 
 	sess, err := s.calls.TryAcquire(in.ID, from, dial, displayName(in.InviteRequest), s.exts)
 	if err != nil {
-		_ = in.Respond(sip.StatusBusyHere, "Busy Here", nil)
+		call.AnswerAndPlayBusy(ctx, in, s.toneProfile(), s.log)
 		return
 	}
 	defer s.calls.Release(in.ID)

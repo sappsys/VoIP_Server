@@ -75,7 +75,7 @@ func (m *Manager) checkExtensionLimit(ext string, exts map[string]*config.Extens
 	m.mu.Unlock()
 	max := e.MaxSimultaneousCalls
 	if max <= 0 {
-		max = 4
+		max = config.DefaultMaxCallsPerExtension
 	}
 	if n >= max {
 		if e.CallWaiting && n == max {

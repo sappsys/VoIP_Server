@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	diaudio "github.com/emiago/diago/audio"
 	diagomedia "github.com/emiago/diago/media"
@@ -149,9 +151,26 @@ func resampleLinear(in []int16, inRate, outRate int) []int16 {
 	return out
 }
 
-// openWavPlaybackReader returns a reader and mime type suitable for AudioPlayback.Play.
-// Native 8 kHz mono WAVs stream as audio/wav; others are normalized to PCM and must
-// use audio/pcm so diago encodes to G.711 before RTP (raw "" would sound like noise).
+// openAudioPlaybackReader returns a reader and mime type suitable for AudioPlayback.Play.
+// WAV and MP3 are decoded/resampled to the negotiated codec rate. Native 8 kHz mono WAVs
+// stream as audio/wav; others are normalized to PCM and must use audio/pcm.
+func openAudioPlaybackReader(path string, codec diagomedia.Codec) (io.Reader, string, error) {
+	if isMP3Path(path) {
+		pcm, err := loadMP3PCMForCodec(path, codec)
+		if err != nil {
+			return nil, "", err
+		}
+		return bytes.NewReader(pcm), "audio/pcm", nil
+	}
+	return openWavPlaybackReader(path, codec)
+}
+
+func isMP3Path(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".mp3"
+}
+
+// openWavPlaybackReader returns a reader and mime type for WAV prompts.
 func openWavPlaybackReader(path string, codec diagomedia.Codec) (io.Reader, string, error) {
 	info, err := readWavPCMInfo(path)
 	if err != nil {

@@ -8,6 +8,27 @@ an `alpha` prerelease suffix.
 
 ## [Unreleased]
 
+## [v0.1.5alpha] - 2026-07-04
+
+[Release](https://github.com/sappsys/VoIP_Server/releases/tag/v0.1.5alpha)
+
+### Added
+
+- Phone-initiated hold: holder hears dial tone, held party hears MOH on first press (Starface / unregistered caller path)
+- PCM transcoding bridge with requirement tests for hold, transfer, conference, and mixed-codec calls
+- `REQUIREMENTS.md` traceability for hold, bridge, and signalling behaviour
+- Symmetric RTP (`RTPNAT`) for unregistered callers and NAT-learned media paths
+- Regional dial/busy/ring tone profiles via `[tones]` in `config.toml`
+- MP3 voice prompt playback where supported
+
+### Fixed
+
+- Hold entry taking 7+ seconds: dial tone on recvonly phone-hold leg without a racing server re-INVITE
+- Hold release during slow entry leaving MOH running or activating hold after the user already released
+- Corrupted audio after unhold: re-INVITE codec reorder (e.g. G722 before PCMU) no longer breaks the PCM bridge
+- Pre-hold bridge codecs restored before bridge restart on unhold
+- MOH and dial tone via pcmcodec RTP path for G722 and post-hold SDP churn
+
 ## [v0.1.4alpha] - 2026-07-02
 
 [Release](https://github.com/sappsys/VoIP_Server/releases/tag/v0.1.4alpha)

@@ -21,7 +21,7 @@ func TestPresenceSubscribeNotify(t *testing.T) {
 
 	var mu sync.Mutex
 	var gotPIDF string
-	ep101 := newSIPEndpoint(t, func(req *sip.Request, tx sip.ServerTransaction) {
+	ep101 := newSIPEndpoint(t, port, "101", "secret", func(req *sip.Request, tx sip.ServerTransaction) {
 		if req.Method == sip.NOTIFY {
 			mu.Lock()
 			gotPIDF = string(req.Body())
@@ -29,23 +29,22 @@ func TestPresenceSubscribeNotify(t *testing.T) {
 			_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
 		}
 	})
-	ep102 := newSIPEndpoint(t, nil)
+	ep102 := newSIPEndpoint(t, port, "102", "secret", nil)
 
-	registerExtension(t, ep102.dg, port, "102", "secret")
-	registerExtension(t, ep101.dg, port, "101", "secret")
+	ep102.h.register()
+	ep101.h.register()
 	time.Sleep(100 * time.Millisecond)
 
 	recipient := sip.Uri{User: "102", Host: "127.0.0.1", Port: port}
 	req := sip.NewRequest(sip.SUBSCRIBE, recipient)
-	req.AppendHeader(&sip.FromHeader{Address: sip.Uri{User: "101", Host: "127.0.0.1", Port: ep101.port}, Params: sip.NewParams()})
+	req.AppendHeader(&sip.FromHeader{Address: sip.Uri{User: "101", Host: "127.0.0.1"}, Params: sip.NewParams()})
 	req.From().Params.Add("tag", "subfrom")
 	req.AppendHeader(&sip.ToHeader{Address: sip.Uri{User: "102", Host: "127.0.0.1", Port: port}})
 	req.AppendHeader(sip.NewHeader("Call-ID", "presence-call-1"))
 	req.AppendHeader(sip.NewHeader("Event", "presence"))
 	req.AppendHeader(sip.NewHeader("Expires", "3600"))
-	req.AppendHeader(&sip.ContactHeader{Address: sip.Uri{User: "101", Host: "127.0.0.1", Port: ep101.port}})
+	req.AppendHeader(&sip.ContactHeader{Address: sip.Uri{User: "101", Host: "127.0.0.1"}})
 	req.SetDestination(fmt.Sprintf("127.0.0.1:%d", port))
-	req.SetSource(fmt.Sprintf("127.0.0.1:%d", ep101.port))
 
 	tx, err := ep101.client.TransactionRequest(ctx, req)
 	if err != nil {
@@ -88,7 +87,7 @@ func TestOfflineMessageDeliveredOnRegister(t *testing.T) {
 
 	var mu sync.Mutex
 	var gotBody string
-	ep102 := newSIPEndpoint(t, func(req *sip.Request, tx sip.ServerTransaction) {
+	ep102 := newSIPEndpoint(t, port, "102", "secret", func(req *sip.Request, tx sip.ServerTransaction) {
 		if req.Method == sip.MESSAGE {
 			mu.Lock()
 			gotBody = string(req.Body())
@@ -96,18 +95,17 @@ func TestOfflineMessageDeliveredOnRegister(t *testing.T) {
 			_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
 		}
 	})
-	ep101 := newSIPEndpoint(t, nil)
-	registerExtension(t, ep101.dg, port, "101", "secret")
+	ep101 := newSIPEndpoint(t, port, "101", "secret", nil)
+	ep101.h.register()
 	time.Sleep(100 * time.Millisecond)
 
 	recipient := sip.Uri{User: "102", Host: "127.0.0.1", Port: port}
 	msg := sip.NewRequest(sip.MESSAGE, recipient)
-	msg.AppendHeader(&sip.FromHeader{Address: sip.Uri{User: "101", Host: "127.0.0.1", Port: ep101.port}})
+	msg.AppendHeader(&sip.FromHeader{Address: sip.Uri{User: "101", Host: "127.0.0.1"}})
 	msg.AppendHeader(&sip.ToHeader{Address: sip.Uri{User: "102", Host: "127.0.0.1", Port: port}})
 	msg.AppendHeader(sip.NewHeader("Content-Type", "text/plain"))
 	msg.SetBody([]byte("see you later"))
 	msg.SetDestination(fmt.Sprintf("127.0.0.1:%d", port))
-	msg.SetSource(fmt.Sprintf("127.0.0.1:%d", ep101.port))
 
 	tx, err := ep101.client.TransactionRequest(ctx, msg)
 	if err != nil {
@@ -122,7 +120,7 @@ func TestOfflineMessageDeliveredOnRegister(t *testing.T) {
 		t.Fatal("message timeout")
 	}
 
-	registerExtension(t, ep102.dg, port, "102", "secret")
+	ep102.h.register()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {

@@ -16,13 +16,18 @@ func playWavFile(ctx context.Context, callDone context.Context, pb *diago.AudioP
 	select {
 	case <-ctx.Done():
 		return false
-	case <-callDone.Done():
-		return false
 	default:
+	}
+	if callDone != nil {
+		select {
+		case <-callDone.Done():
+			return false
+		default:
+		}
 	}
 
 	codec := pb.Codec()
-	reader, mime, err := openWavPlaybackReader(path, codec)
+	reader, mime, err := openAudioPlaybackReader(path, codec)
 	if err != nil {
 		if log != nil {
 			log.Warn("wav open failed", "path", path, "error", err)

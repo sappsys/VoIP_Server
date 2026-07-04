@@ -105,7 +105,7 @@ func newTestServerLight(t *testing.T) (*Server, *store.Store, *mockDialer) {
 		calls:      call.NewManager(cfg.Limits.MaxCalls),
 		registry:   registry,
 		park:       call.NewParkLot(),
-		hunt:       hunt.NewHandler(reg, nil, &bridge),
+		hunt:       hunt.NewHandler(reg, nil, &bridge, 15),
 		bridge:     bridge,
 		features:   cfg.Features.FeatureCodes(),
 		testDialer: md,

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/diago"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/sappsys/VoIP_Server/internal/config"
@@ -23,7 +22,7 @@ type Binding struct {
 type Registrar struct {
 	realm               string
 	exts                map[string]*config.Extension
-	digest              *diago.DigestAuthServer
+	digest              *registerDigestAuth
 	mu                  sync.RWMutex
 	bindings            map[string][]Binding
 	log                 *slog.Logger
@@ -53,7 +52,7 @@ func New(realm string, srv config.ServerConfig, exts map[string]*config.Extensio
 	return &Registrar{
 		realm:               realm,
 		exts:                exts,
-		digest:              diago.NewDigestServer(),
+		digest:              newRegisterDigestAuth(maxExpiry, log),
 		bindings:            make(map[string][]Binding),
 		log:                 log,
 		minExpiry:           minExpiry,
@@ -87,12 +86,7 @@ func (r *Registrar) RunBackground(ctx context.Context, client *sipgo.Client) {
 }
 
 func (r *Registrar) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
-	user := req.To().Address.User
-	if user == "" {
-		if from := req.From().Address.User; from != "" {
-			user = from
-		}
-	}
+	user := extractRegisterUser(req)
 	source := req.Source()
 	r.log.Debug("register request", "user", user, "source", source)
 
@@ -105,12 +99,20 @@ func (r *Registrar) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 
-	auth := diago.DigestAuth{Username: user, Password: ext.Password, Realm: r.realm}
-	res, err := r.digest.AuthorizeRequest(req, auth)
-	if err != nil || res.StatusCode != sip.StatusOK {
-		r.log.Debug("register auth failed", "user", user, "status", statusCode(res))
-		if res != nil {
-			_ = tx.Respond(res)
+	decision := r.digest.authorize(req, r.realm, user, ext.Password)
+	switch decision.outcome {
+	case authOK:
+		// continue below
+	case authChallenge:
+		r.log.Debug("register digest challenge", "user", user, "source", source, "reason", decision.reason)
+		if decision.res != nil {
+			_ = tx.Respond(decision.res)
+		}
+		return
+	default:
+		r.log.Info("register auth denied", "user", user, "source", source, "reason", decision.reason)
+		if decision.res != nil {
+			_ = tx.Respond(decision.res)
 		}
 		return
 	}
@@ -122,9 +124,12 @@ func (r *Registrar) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 
-	if expiry == 0 {
-		r.removeBinding(user, *contact)
-		r.log.Info("register removed", "user", user, "contact", contact.Address.String())
+	var stored sip.ContactHeader
+	grantedSec := 0
+
+	if expiry == 0 || isWildcardContact(*contact) {
+		r.removeBinding(user, *contact, source)
+		r.log.Info("register removed", "user", user, "contact", contact.Address.String(), "source", source)
 	} else {
 		if expiry < r.minExpiry {
 			r.log.Debug("register expiry too short", "user", user, "requested", expiry, "min", r.minExpiry)
@@ -140,21 +145,17 @@ func (r *Registrar) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
 		if expiry <= 0 {
 			expiry = r.minExpiry
 		}
-		stored := rewriteContactForNAT(*contact.Clone(), source, r.preserveContactHost)
-		r.addBinding(user, Binding{
+		stored = rewriteContactForNAT(*contact.Clone(), source, r.preserveContactHost)
+		grantedSec = int(expiry.Seconds())
+		r.addBinding(user, source, Binding{
 			Contact: stored,
 			Expires: time.Now().Add(expiry),
 			granted: expiry,
 		})
-		r.log.Info("register ok", "user", user, "contact", stored.Address.String(), "expires_sec", int(expiry.Seconds()), "source", source)
+		r.log.Info("register ok", "user", user, "contact", stored.Address.String(), "expires_sec", grantedSec, "source", source)
 	}
 
-	okRes := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
-	if expiry > 0 {
-		exp := sip.ExpiresHeader(expiry.Seconds())
-		okRes.AppendHeader(&exp)
-	}
-	_ = tx.Respond(okRes)
+	_ = tx.Respond(buildRegisterOK(req, stored, grantedSec))
 }
 
 func (r *Registrar) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
@@ -162,12 +163,16 @@ func (r *Registrar) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
 	if req.From() != nil {
 		user = req.From().Address.User
 	}
-	r.log.Debug("options request", "user", user, "source", req.Source())
+	if user == "" {
+		user = extractRegisterUser(req)
+	}
+	source := req.Source()
+	r.log.Debug("options request", "user", user, "source", source)
 	if user != "" {
 		if contact := req.Contact(); contact != nil {
-			r.touchBinding(user, *contact)
+			r.touchBinding(user, *contact, source)
 		} else {
-			r.touchBindingByUser(user)
+			r.touchBindingBySource(user, source)
 		}
 	}
 	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
@@ -195,30 +200,42 @@ func (r *Registrar) parseRequestedExpiry(req *sip.Request) time.Duration {
 	return expiry
 }
 
-func (r *Registrar) addBinding(user string, b Binding) {
+func (r *Registrar) addBinding(user, source string, b Binding) {
 	r.mu.Lock()
+	dest, _ := bindingDestFromContact(user, b.Contact)
 	list := r.bindings[user]
-	updated := list[:0]
+	out := make([]Binding, 0, len(list)+1)
 	for _, existing := range list {
-		if existing.Contact.Address.String() != b.Contact.Address.String() {
-			updated = append(updated, existing)
+		if contactMatchesStored(user, existing.Contact, b.Contact, source, r.preserveContactHost) {
+			continue
 		}
+		existingDest, ok := bindingDestFromContact(user, existing.Contact)
+		if ok && dest != "" && destinationsMatch(existingDest, dest) {
+			continue
+		}
+		out = append(out, existing)
 	}
-	updated = append(updated, b)
-	r.bindings[user] = updated
+	out = append(out, b)
+	r.bindings[user] = out
 	r.mu.Unlock()
 	r.fireBindingChange(user)
 }
 
-func (r *Registrar) removeBinding(user string, contact sip.ContactHeader) {
+func (r *Registrar) removeBinding(user string, contact sip.ContactHeader, source string) {
 	r.mu.Lock()
+	if isWildcardContact(contact) {
+		delete(r.bindings, user)
+		r.mu.Unlock()
+		r.fireBindingChange(user)
+		return
+	}
 	list := r.bindings[user]
 	out := list[:0]
-	target := contact.Address.String()
 	for _, b := range list {
-		if b.Contact.Address.String() != target {
-			out = append(out, b)
+		if contactMatchesStored(user, b.Contact, contact, source, r.preserveContactHost) {
+			continue
 		}
+		out = append(out, b)
 	}
 	if len(out) == 0 {
 		delete(r.bindings, user)
@@ -235,13 +252,42 @@ func (r *Registrar) fireBindingChange(user string) {
 	}
 }
 
-func (r *Registrar) touchBinding(user string, contact sip.ContactHeader) {
+func (r *Registrar) touchBinding(user string, contact sip.ContactHeader, source string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	list := r.bindings[user]
-	target := contact.Address.String()
+	if len(list) == 0 {
+		return
+	}
 	for i, b := range list {
-		if b.Contact.Address.String() != target {
+		if !contactMatchesStored(user, b.Contact, contact, source, r.preserveContactHost) {
+			continue
+		}
+		refresh := b.granted
+		if refresh <= 0 {
+			refresh = r.maxExpiry
+		}
+		list[i].Expires = time.Now().Add(refresh)
+		if !r.preserveContactHost && source != "" {
+			list[i].Contact = rewriteContactForNAT(contact, source, false)
+		}
+		r.bindings[user] = list
+		r.log.Debug("register refreshed via options", "user", user, "source", source, "expires_sec", int(refresh.Seconds()))
+		return
+	}
+}
+
+func (r *Registrar) touchBindingBySource(user, source string) {
+	if source == "" {
+		r.touchBindingByUser(user)
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.bindings[user]
+	for i, b := range list {
+		dest, ok := bindingDestFromContact(user, b.Contact)
+		if !ok || !destinationsMatch(dest, source) {
 			continue
 		}
 		refresh := b.granted
@@ -250,7 +296,7 @@ func (r *Registrar) touchBinding(user string, contact sip.ContactHeader) {
 		}
 		list[i].Expires = time.Now().Add(refresh)
 		r.bindings[user] = list
-		r.log.Debug("register refreshed via options", "user", user, "contact", target, "expires_sec", int(refresh.Seconds()))
+		r.log.Debug("register refreshed via options", "user", user, "source", source, "expires_sec", int(refresh.Seconds()))
 		return
 	}
 }
@@ -285,7 +331,7 @@ func (r *Registrar) RegisteredExtensions() []string {
 
 // RegisterForTest seeds a contact binding without a SIP REGISTER (tests only).
 func (r *Registrar) RegisterForTest(ext string, uri sip.Uri) {
-	r.addBinding(ext, Binding{
+	r.addBinding(ext, "", Binding{
 		Contact: sip.ContactHeader{Address: uri},
 		Expires: time.Now().Add(24 * time.Hour),
 		granted: 24 * time.Hour,
@@ -384,7 +430,7 @@ func (r *Registrar) sendOptionsKeepalive(ctx context.Context, client *sipgo.Clie
 			select {
 			case res := <-tx.Responses():
 				if res != nil && res.StatusCode >= 200 && res.StatusCode < 300 {
-					r.touchBinding(ext, b.Contact)
+					r.touchBinding(ext, b.Contact, uri.HostPort())
 					r.log.Debug("options keepalive ok", "extension", ext, "uri", uri.String(), "status", res.StatusCode)
 				} else {
 					code := 0
@@ -419,9 +465,3 @@ func (r *Registrar) snapshotBindings() map[string][]Binding {
 	return out
 }
 
-func statusCode(res *sip.Response) int {
-	if res == nil {
-		return 0
-	}
-	return res.StatusCode
-}

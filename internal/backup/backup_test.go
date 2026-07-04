@@ -102,7 +102,7 @@ extensions_dir = "extensions"
 	if !bytes.Contains(restoredCfg, []byte(`bind_host = "127.0.0.1"`)) {
 		t.Fatalf("config not restored: %s", restoredCfg)
 	}
-	exts, err := config.LoadExtensions(restoreLayout.ExtensionsDir)
+	exts, err := config.LoadExtensions(restoreLayout.ExtensionsDir, 0)
 	if err != nil || exts["101"] == nil {
 		t.Fatalf("extensions not restored: %v", err)
 	}

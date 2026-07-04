@@ -72,6 +72,85 @@ func TestPhonebookXMLYealinkFormat(t *testing.T) {
 	}
 }
 
+func TestPhonebookXMLIncludesExtensions(t *testing.T) {
+	s, st, _ := testWebServer(t)
+	if err := config.SaveExtension(s.extDir, &config.Extension{
+		Extension: "201", DisplayName: "Zara Desk", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveExtension(s.extDir, &config.Extension{
+		Extension: "202", DisplayName: "Disabled User", Enabled: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreatePhonebookEntry("External", "999", "Mobile"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/phonebook/directory.xml", nil)
+	rr := httptest.NewRecorder()
+	s.handlePhonebookXML(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var dir ipPhoneDirectory
+	if err := xml.Unmarshal(rr.Body.Bytes(), &dir); err != nil {
+		t.Fatal(err)
+	}
+	if len(dir.Entries) != 2 {
+		t.Fatalf("entries=%d want 2 (static + enabled extension)", len(dir.Entries))
+	}
+	names := map[string]string{}
+	for _, e := range dir.Entries {
+		if len(e.Telephone) == 0 {
+			t.Fatalf("missing telephone: %+v", e)
+		}
+		names[e.Telephone[0].Number] = e.Name
+	}
+	if names["999"] != "External" {
+		t.Fatalf("static entry missing: %+v", names)
+	}
+	if names["201"] != "Zara Desk" {
+		t.Fatalf("extension entry missing: %+v", names)
+	}
+	if _, ok := names["202"]; ok {
+		t.Fatal("disabled extension should not appear")
+	}
+}
+
+func TestPhonebookStaticOverridesExtensionNumber(t *testing.T) {
+	s, _, _ := testWebServer(t)
+	if err := config.SaveExtension(s.extDir, &config.Extension{
+		Extension: "301", DisplayName: "Alice Ext", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.CreatePhonebookEntry("Alice Custom", "301", "Office"); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, err := s.buildPhonebookDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	count301 := 0
+	for _, e := range dir.Entries {
+		for _, tel := range e.Telephone {
+			if phonebookNumberKey(tel.Number) == "301" {
+				count301++
+				if e.Name != "Alice Custom" {
+					t.Fatalf("name=%q want static entry name", e.Name)
+				}
+			}
+		}
+	}
+	if count301 != 1 {
+		t.Fatalf("301 entries=%d want 1 (static wins over extension)", count301)
+	}
+}
+
 func TestPhonebookSaveAndDelete(t *testing.T) {
 	s, st, _ := testWebServer(t)
 	cookie := loginAs(t, s, "admin")

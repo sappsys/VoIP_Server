@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/sappsys/VoIP_Server/internal/config"
 	"github.com/sappsys/VoIP_Server/internal/store"
 )
 
@@ -30,20 +33,13 @@ type telephoneElem struct {
 	Number string `xml:",chardata"`
 }
 
-// handlePhonebookXML serves the database-backed directory.xml (no auth: IP phones
-// fetch this unauthenticated, same as any TFTP/HTTP remote phonebook server).
+// handlePhonebookXML serves the combined directory (static DB entries + extensions).
+// No auth: IP phones fetch this unauthenticated, same as any TFTP/HTTP remote phonebook server.
 func (s *Server) handlePhonebookXML(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.store.ListPhonebookEntries()
+	dir, err := s.buildPhonebookDirectory()
 	if err != nil {
 		http.Error(w, "phonebook unavailable", http.StatusInternalServerError)
 		return
-	}
-	dir := ipPhoneDirectory{Entries: make([]directoryEntry, 0, len(entries))}
-	for _, e := range entries {
-		dir.Entries = append(dir.Entries, directoryEntry{
-			Name:      e.Name,
-			Telephone: []telephoneElem{{Label: e.Label, Number: e.Number}},
-		})
 	}
 	body, err := xml.MarshalIndent(dir, "", "  ")
 	if err != nil {
@@ -53,6 +49,71 @@ func (s *Server) handlePhonebookXML(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 	_, _ = w.Write([]byte(xml.Header))
 	_, _ = w.Write(body)
+}
+
+func (s *Server) buildPhonebookDirectory() (ipPhoneDirectory, error) {
+	static, err := s.store.ListPhonebookEntries()
+	if err != nil {
+		return ipPhoneDirectory{}, err
+	}
+	exts, err := s.loadExtensions()
+	if err != nil {
+		return ipPhoneDirectory{}, err
+	}
+
+	seen := make(map[string]bool, len(static))
+	dir := ipPhoneDirectory{Entries: make([]directoryEntry, 0, len(static)+len(exts))}
+	for _, e := range static {
+		dir.Entries = append(dir.Entries, directoryEntry{
+			Name:      e.Name,
+			Telephone: []telephoneElem{{Label: e.Label, Number: e.Number}},
+		})
+		seen[phonebookNumberKey(e.Number)] = true
+	}
+
+	extList := make([]*config.Extension, 0, len(exts))
+	for _, ext := range exts {
+		if ext != nil && ext.Enabled {
+			extList = append(extList, ext)
+		}
+	}
+	slices.SortFunc(extList, func(a, b *config.Extension) int {
+		return strings.Compare(strings.ToLower(extensionDisplayName(a)), strings.ToLower(extensionDisplayName(b)))
+	})
+	for _, ext := range extList {
+		if seen[ext.Extension] {
+			continue
+		}
+		dir.Entries = append(dir.Entries, directoryEntry{
+			Name:      extensionDisplayName(ext),
+			Telephone: []telephoneElem{{Label: "Extension", Number: ext.Extension}},
+		})
+	}
+
+	sort.Slice(dir.Entries, func(i, j int) bool {
+		return strings.ToLower(dir.Entries[i].Name) < strings.ToLower(dir.Entries[j].Name)
+	})
+	return dir, nil
+}
+
+func extensionDisplayName(ext *config.Extension) string {
+	if ext == nil {
+		return ""
+	}
+	if ext.DisplayName != "" {
+		return ext.DisplayName
+	}
+	return ext.Extension
+}
+
+// phonebookNumberKey normalizes a dial string for duplicate detection against extensions.
+func phonebookNumberKey(number string) string {
+	n := strings.TrimSpace(number)
+	n = strings.TrimPrefix(strings.ToLower(n), "sip:")
+	if at := strings.Index(n, "@"); at >= 0 {
+		n = n[:at]
+	}
+	return n
 }
 
 // handlePhonebookStatic serves any additional *.xml files placed in the phonebook
@@ -84,9 +145,10 @@ func (s *Server) handlePhonebookStatic(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, clean, modTime, f)
 }
 
-// handlePhonebook renders the admin UI to create/edit/delete entries.
+// handlePhonebook renders the admin UI to create/edit/delete static entries.
 func (s *Server) handlePhonebook(w http.ResponseWriter, r *http.Request) {
 	entries, _ := s.store.ListPhonebookEntries()
+	exts, _ := s.loadExtensions()
 	admin := s.isAdmin(r)
 	editID := queryEditID(r)
 	var editing *store.PhonebookEntry
@@ -115,6 +177,23 @@ func (s *Server) handlePhonebook(w http.ResponseWriter, r *http.Request) {
 		tableHeaders = th("Name", "Number", "Label", "Actions")
 	}
 
+	var extRows string
+	extList := make([]*config.Extension, 0, len(exts))
+	for _, ext := range exts {
+		if ext != nil && ext.Enabled {
+			extList = append(extList, ext)
+		}
+	}
+	slices.SortFunc(extList, func(a, b *config.Extension) int {
+		return strings.Compare(strings.ToLower(extensionDisplayName(a)), strings.ToLower(extensionDisplayName(b)))
+	})
+	for _, ext := range extList {
+		extRows += fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			html.EscapeString(extensionDisplayName(ext)),
+			html.EscapeString(ext.Extension),
+			html.EscapeString("Extension"))
+	}
+
 	nameVal := ""
 	numberVal := ""
 	labelVal := ""
@@ -126,8 +205,10 @@ func (s *Server) handlePhonebook(w http.ResponseWriter, r *http.Request) {
 		hiddenID = hiddenField("id", fmt.Sprintf("%d", editing.ID))
 	}
 
-	content := pageHeader("Remote phonebook", "Served at <code>/phonebook/directory.xml</code> for IP phones (Yealink/Grandstream compatible).") +
-		panel("Entries", dataTable(tableHeaders, rows)) +
+	content := pageHeader("Remote phonebook", "Served at <code>/phonebook/directory.xml</code> for IP phones (Yealink/Grandstream compatible). Static contacts are managed here; enabled extensions are included automatically.") +
+		panel("Static entries", dataTable(tableHeaders, rows)) +
+		panel("Extensions (automatic)", `<p class="sub">These are included in <code>directory.xml</code> from extension config. Edit them under <a href="/extensions">Extensions</a>.</p>`+
+			dataTable(th("Name", "Number", "Label"), extRows)) +
 		adminOnly(admin, editPanel(editPanelTitle(editing != nil, "Add entry", "Edit entry"), formPost("/phonebook/save",
 			hiddenID+
 				field("Name", fmt.Sprintf(`<input name="name" placeholder="Contact name" required%s>`, valAttr(nameVal)))+

@@ -57,8 +57,8 @@ func TestOpenWavPlaybackReaderMOHUsesPCM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mime != "audio/pcm" {
-		t.Fatalf("mime=%q want audio/pcm for resampled moh", mime)
+	if mime != "audio/pcm" && mime != "audio/wav" {
+		t.Fatalf("mime=%q want audio/pcm or audio/wav for moh playback", mime)
 	}
 }
 

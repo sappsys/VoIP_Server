@@ -4,21 +4,33 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 
 	"github.com/emiago/diago"
-	"github.com/emiago/diago/media/sdp"
 	"github.com/emiago/sipgo/sip"
 	"github.com/sappsys/VoIP_Server/internal/media"
+	"github.com/sappsys/VoIP_Server/internal/media/tones"
 )
+
+// responseStartsRingback reports SIP responses that should play regional ringback to the caller.
+func responseStartsRingback(statusCode int) bool {
+	return statusCode == sip.StatusRinging || statusCode == sip.StatusSessionInProgress
+}
 
 // BridgePair connects caller (in) to callee (out) with correct ring-then-answer order.
 type BridgePair struct {
-	MOHDir             string
-	Log                *slog.Logger
-	Registry           *Registry
-	RecordCall         func(callerExt, calleeExt string)
-	OnCallStateChange  func(callerExt, calleeExt string, active bool)
+	MOHDir            string
+	Tones             tones.Profile
+	Log               *slog.Logger
+	Registry          *Registry
+	RecordCall        func(callerExt, calleeExt string)
+	OnCallStateChange func(callerExt, calleeExt string, active bool)
+}
+
+func (b *BridgePair) TonesProfile() tones.Profile {
+	if b != nil && b.Tones.Region != "" {
+		return b.Tones
+	}
+	return tones.DefaultProfile()
 }
 
 // ConnectOpts configures a bridged call.
@@ -28,10 +40,12 @@ type ConnectOpts struct {
 	Password        string
 	VideoEnabled    bool
 	ExternalIP      string
-	CallerExt       string
-	CalleeExt       string
-	DialDestination string // host:port for outbound INVITE (from registration)
-	DialTransport   string // udp/tcp from registration contact
+	CallerExt          string
+	CalleeExt          string
+	DialDestination    string // host:port for outbound INVITE (from registration)
+	DialTransport      string // udp/tcp from registration contact
+	DialTimeoutSeconds int // per-attempt outbound INVITE timeout (0 = 15s)
+	RingTimeoutSeconds int // ringback duration before busy (0 = 30s)
 }
 
 // Connect dials the callee, answers the caller, optionally relays video, and
@@ -51,26 +65,46 @@ func (b *BridgePair) Connect(ctx context.Context, dg Dialer, in *diago.DialogSer
 	callerOffer := in.InviteRequest.Body()
 	wantVideo := opts.VideoEnabled && media.HasVideo(callerOffer)
 
-	out, err := InviteOutLeg(ctx, dg, outURI, opts, diago.InviteOptions{
+	hc := &holdController{b: b, ctx: ctx, mohDir: mohDir, in: in, log: b.Log, toneSet: b.TonesProfile()}
+
+	var stopRing context.CancelFunc
+	dialCtx, dialCancel := context.WithTimeout(ctx, RingTimeout(opts.RingTimeoutSeconds))
+	defer dialCancel()
+
+	out, err := InviteOutLeg(dialCtx, dg, outURI, opts, diago.InviteOptions{
 		Originator: in,
 		Headers:    headers,
 		Username:   opts.Username,
 		Password:   opts.Password,
 		OnResponse: func(res *sip.Response) error {
-			if res.StatusCode == sip.StatusRinging {
-				return in.Ringing()
+			if responseStartsRingback(res.StatusCode) {
+				if res.StatusCode == sip.StatusRinging {
+					if err := in.Ringing(); err != nil {
+						return err
+					}
+				}
+				if stopRing == nil {
+					stopRing = StartRingback(ctx, in, b.TonesProfile(), b.Log)
+				}
+				return nil
 			}
-			if res.StatusCode == sip.StatusSessionInProgress {
-				return in.ProgressMedia()
+			if res.StatusCode >= 200 && res.StatusCode < 300 && stopRing != nil {
+				stopRing()
+				stopRing = nil
 			}
 			return nil
 		},
+	}, func(dm *diago.DialogMedia) {
+		hc.onOutboundMediaUpdate(dm)
 	})
 	if err != nil {
+		if stopRing != nil {
+			stopRing()
+		}
 		if b.Log != nil {
 			b.Log.Warn("outbound invite failed", "uri", outURI.String(), "dest", opts.DialDestination, "error", err)
 		}
-		_ = in.Respond(sip.StatusTemporarilyUnavailable, "Unavailable", nil)
+		PlayBusyThenHangup(ctx, in, b.TonesProfile(), b.Log)
 		return err
 	}
 
@@ -80,30 +114,36 @@ func (b *BridgePair) Connect(ctx context.Context, dg Dialer, in *diago.DialogSer
 		In:        in,
 		Out:       out,
 	}
+	hc.ac = ac
+	hc.out = out
 	defer func() {
 		if !ac.Parked {
 			out.Close()
 		}
 	}()
 
-	if b.Registry != nil {
-		b.Registry.Register(ac)
-		defer b.Registry.Unregister(in.ID)
-	}
 	if b.OnCallStateChange != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
 		defer func() { b.OnCallStateChange(opts.CallerExt, opts.CalleeExt, false) }()
 	}
 
-	holdMOH := func(dm *diago.DialogMedia) {
-		b.maybeMOH(ctx, in, mohDir, dm)
+	if stopRing != nil {
+		stopRing()
+		stopRing = nil
 	}
 
 	if err := AnswerSessionOptions(in, diago.AnswerOptions{
-		OnRefer:       b.makeTransferHandler(ctx, in, out, ac),
-		OnMediaUpdate: holdMOH,
+		OnRefer: b.makeTransferHandler(ctx, in, out, ac),
+		OnMediaUpdate: func(dm *diago.DialogMedia) {
+			hc.onInboundMediaUpdate(dm)
+		},
 	}); err != nil {
 		out.Hangup(ctx)
 		return err
+	}
+
+	if b.Registry != nil {
+		b.Registry.Register(ac)
+		defer b.Registry.Unregister(in.ID)
 	}
 
 	if b.RecordCall != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
@@ -117,46 +157,54 @@ func (b *BridgePair) Connect(ctx context.Context, dg Dialer, in *diago.DialogSer
 		b.startVideo(ctx, in, out, callerOffer, out.InviteResponse.Body(), opts.ExternalIP)
 	}
 
-	bridge := diago.NewBridge()
-	if err := bridge.AddDialogSession(in); err != nil {
+	stopBridge, stats, err := b.startControllableBridge(in, out)
+	if err != nil {
 		return err
 	}
-	if err := bridge.AddDialogSession(out); err != nil {
-		return err
-	}
+	ac.setBridgeStop(stopBridge, stats)
+	hc.markBridgeReady()
 
-	select {
-	case <-in.Context().Done():
-	case <-out.Context().Done():
-	}
+	b.waitBridgedLegs(ctx, in, out, ac)
 	return nil
 }
 
 // Join bridges an already-answered outbound leg (hunt, etc.).
-func (b *BridgePair) Join(ctx context.Context, in *diago.DialogServerSession, out *diago.DialogClientSession, opts ConnectOpts, mohDir string) error {
+func (b *BridgePair) Join(ctx context.Context, in *diago.DialogServerSession, out *diago.DialogClientSession, opts ConnectOpts, mohDir string, preHold ...*holdController) error {
 	ac := &ActiveCall{
 		CallerExt: opts.CallerExt,
 		CalleeExt: opts.CalleeExt,
 		In:        in,
 		Out:       out,
 	}
-	if b.Registry != nil {
-		b.Registry.Register(ac)
-		defer b.Registry.Unregister(in.ID)
-	}
 	if b.OnCallStateChange != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
 		defer func() { b.OnCallStateChange(opts.CallerExt, opts.CalleeExt, false) }()
 	}
 
-	holdMOH := func(dm *diago.DialogMedia) {
-		b.maybeMOH(ctx, in, mohDir, dm)
+	var hc *holdController
+	if len(preHold) > 0 && preHold[0] != nil {
+		hc = preHold[0]
+		hc.ac = ac
+		hc.out = out
+	} else {
+		hc = newHoldController(b, ctx, ac, mohDir, in, out)
+	}
+	// Outbound leg may already be answered (hunt); ensure callee-side hold is tracked.
+	if out != nil {
+		EnsureClientDTMFCodec(out)
 	}
 
 	if err := AnswerSessionOptions(in, diago.AnswerOptions{
-		OnRefer:       b.makeTransferHandler(ctx, in, out, ac),
-		OnMediaUpdate: holdMOH,
+		OnRefer: b.makeTransferHandler(ctx, in, out, ac),
+		OnMediaUpdate: func(dm *diago.DialogMedia) {
+			hc.onInboundMediaUpdate(dm)
+		},
 	}); err != nil {
 		return err
+	}
+
+	if b.Registry != nil {
+		b.Registry.Register(ac)
+		defer b.Registry.Unregister(in.ID)
 	}
 
 	if b.RecordCall != nil && opts.CallerExt != "" && opts.CalleeExt != "" {
@@ -171,25 +219,73 @@ func (b *BridgePair) Join(ctx context.Context, in *diago.DialogServerSession, ou
 		b.startVideo(ctx, in, out, callerOffer, out.InviteResponse.Body(), opts.ExternalIP)
 	}
 
-	bridge := diago.NewBridge()
-	if err := bridge.AddDialogSession(in); err != nil {
+	stopBridge, stats, err := b.startControllableBridge(in, out)
+	if err != nil {
 		return err
 	}
-	if err := bridge.AddDialogSession(out); err != nil {
-		return err
-	}
+	ac.setBridgeStop(stopBridge, stats)
+	hc.markBridgeReady()
 
-	select {
-	case <-in.Context().Done():
-	case <-out.Context().Done():
-	}
+	b.waitBridgedLegs(ctx, in, out, ac)
 	return nil
 }
 
-// makeTransferHandler bridges the remote party (peer) to the REFER target.
+// waitBridgedLegs blocks until a leg hangs up, then signals the peer and tears down media.
+func (b *BridgePair) waitBridgedLegs(ctx context.Context, in *diago.DialogServerSession, out *diago.DialogClientSession, ac *ActiveCall) {
+	waitDialogPair(ctx, in, out, ac)
+}
+
+// WaitDialogPair blocks until either dialog ends and BYEs the peer.
+func WaitDialogPair(ctx context.Context, a, b diago.DialogSession, ac *ActiveCall) {
+	waitDialogPair(ctx, a, b, ac)
+}
+
+// WaitDialogPairWithBridge is like WaitDialogPair and stops the PCM bridge on teardown.
+func WaitDialogPairWithBridge(ctx context.Context, a, b diago.DialogSession, stop func() error) {
+	waitDialogPair(ctx, a, b, &ActiveCall{bridgeStop: stop})
+}
+
+func waitDialogPair(ctx context.Context, a, b diago.DialogSession, ac *ActiveCall) {
+	hangupCtx := context.Background()
+	select {
+	case <-a.Context().Done():
+		hangupDialogSession(hangupCtx, b)
+	case <-b.Context().Done():
+		hangupDialogSession(hangupCtx, a)
+	case <-ctx.Done():
+		hangupDialogSession(hangupCtx, a)
+		hangupDialogSession(hangupCtx, b)
+	}
+	if ac != nil {
+		if ac.bridgeStop != nil {
+			_ = ac.bridgeStop()
+		}
+		if ac.holdCancel != nil {
+			ac.holdCancel()
+		}
+	}
+}
+
+func hangupDialogSession(ctx context.Context, d diago.DialogSession) {
+	if d != nil && d.Context().Err() == nil {
+		_ = d.Hangup(ctx)
+	}
+}
+
+func hangupServerLeg(ctx context.Context, in *diago.DialogServerSession) {
+	hangupDialogSession(ctx, in)
+}
+
+func hangupClientLeg(ctx context.Context, out *diago.DialogClientSession) {
+	hangupDialogSession(ctx, out)
+}
 // On attended transfer, the consult leg (ConsultIn) is hung up first.
 func (b *BridgePair) makeTransferHandler(ctx context.Context, in *diago.DialogServerSession, peer *diago.DialogClientSession, ac *ActiveCall) func(*diago.DialogClientSession) error {
 	return func(referDialog *diago.DialogClientSession) error {
+		if ac != nil {
+			ac.StopBridge()
+			ac.cancelHold()
+		}
 		if err := referDialog.Invite(ctx, diago.InviteClientOptions{}); err != nil {
 			return err
 		}
@@ -202,68 +298,17 @@ func (b *BridgePair) makeTransferHandler(ctx context.Context, in *diago.DialogSe
 			ac.ConsultIn.Hangup(ctx)
 		}
 
-		bridge := diago.NewBridge()
-		if err := bridge.AddDialogSession(peer); err != nil {
-			return err
-		}
-		if err := bridge.AddDialogSession(referDialog); err != nil {
+		stopBridge, _, err := b.startTranscodingBridge(peer, referDialog)
+		if err != nil {
 			return err
 		}
 		go func() {
 			<-referDialog.Context().Done()
-			in.Hangup(ctx)
+			hangupDialogSession(ctx, in)
 		}()
-		<-referDialog.Context().Done()
+		waitDialogPair(ctx, peer, referDialog, &ActiveCall{bridgeStop: stopBridge})
 		return nil
 	}
-}
-
-var mohMu sync.Mutex
-var mohActive = map[string]bool{}
-
-func (b *BridgePair) maybeMOH(ctx context.Context, sess *diago.DialogServerSession, mohDir string, dm *diago.DialogMedia) {
-	if mohDir == "" || dm == nil {
-		return
-	}
-	ms := dm.MediaSession()
-	if ms == nil || ms.Mode != sdp.ModeRecvonly {
-		return
-	}
-	id := sess.ID
-	mohMu.Lock()
-	if mohActive[id] {
-		mohMu.Unlock()
-		return
-	}
-	mohActive[id] = true
-	mohMu.Unlock()
-	defer func() {
-		mohMu.Lock()
-		delete(mohActive, id)
-		mohMu.Unlock()
-	}()
-
-	tracks, err := MOHTracks(mohDir)
-	if err != nil || len(tracks) == 0 {
-		if b.Log != nil && err != nil {
-			b.Log.Warn("moh directory missing", "path", mohDir, "error", err)
-		}
-		return
-	}
-
-	pb, err := sess.PlaybackCreate()
-	if err != nil {
-		return
-	}
-	go func() {
-		for {
-			for _, path := range tracks {
-				if !playWavFile(ctx, sess.Context(), &pb, path, b.Log) {
-					return
-				}
-			}
-		}
-	}()
 }
 
 func (b *BridgePair) startVideo(ctx context.Context, in *diago.DialogServerSession, out *diago.DialogClientSession, callerOffer, calleeAnswer []byte, externalIP string) {
@@ -332,6 +377,11 @@ func (b *BridgePair) CompleteTransfer(ctx context.Context, dg Dialer, ac *Active
 	if ac == nil {
 		return fmt.Errorf("no active call")
 	}
+	ac.cancelHold()
+	if ac.bridgeStop != nil {
+		_ = ac.bridgeStop()
+		ac.bridgeStop = nil
+	}
 	ac.TransferReady = false
 
 	heldIn, heldOut := ac.In, ac.Out
@@ -339,25 +389,25 @@ func (b *BridgePair) CompleteTransfer(ctx context.Context, dg Dialer, ac *Active
 		return fmt.Errorf("no held party")
 	}
 
-	targetOut, err := InviteOutLeg(ctx, dg, targetURI, dialOpts, diago.InviteOptions{Headers: headers})
+	targetOut, err := func() (*diago.DialogClientSession, error) {
+		dialCtx, cancel := context.WithTimeout(ctx, DialTimeout(dialOpts.DialTimeoutSeconds))
+		defer cancel()
+		return InviteOutLeg(dialCtx, dg, targetURI, dialOpts, diago.InviteOptions{Headers: headers}, nil)
+	}()
 	if err != nil {
 		return err
 	}
+	defer targetOut.Close()
 
-	bridge := diago.NewBridge()
+	var held diago.DialogSession
 	if heldOut != nil {
-		if err := bridge.AddDialogSession(heldOut); err != nil {
-			targetOut.Close()
-			return err
-		}
+		held = heldOut
 	} else {
-		if err := bridge.AddDialogSession(heldIn); err != nil {
-			targetOut.Close()
-			return err
-		}
+		held = heldIn
 	}
-	if err := bridge.AddDialogSession(targetOut); err != nil {
-		targetOut.Close()
+
+	stopBridge, _, err := b.startControllableBridgeSessions(held, targetOut)
+	if err != nil {
 		return err
 	}
 
@@ -371,8 +421,7 @@ func (b *BridgePair) CompleteTransfer(ctx context.Context, dg Dialer, ac *Active
 		ac.Out.Hangup(ctx)
 	}
 
-	<-targetOut.Context().Done()
-	targetOut.Close()
+	waitDialogPair(ctx, held, targetOut, &ActiveCall{bridgeStop: stopBridge})
 	return nil
 }
 
@@ -389,32 +438,21 @@ func (b *BridgePair) BridgeParked(ctx context.Context, retrieverIn *diago.Dialog
 		return err
 	}
 
-	bridge := diago.NewBridge()
+	var held diago.DialogSession
 	if pc.HeldOut != nil {
-		if err := bridge.AddDialogSession(retrieverIn); err != nil {
-			return err
-		}
-		if err := bridge.AddDialogSession(pc.HeldOut); err != nil {
-			return err
-		}
+		held = pc.HeldOut
 	} else if pc.HeldIn != nil {
-		if err := bridge.AddDialogSession(pc.HeldIn); err != nil {
-			return err
-		}
-		if err := bridge.AddDialogSession(retrieverIn); err != nil {
-			return err
-		}
+		held = pc.HeldIn
 	} else {
 		return fmt.Errorf("park slot empty")
 	}
 
-	select {
-	case <-retrieverIn.Context().Done():
-	case <-ctx.Done():
+	stopBridge, _, err := b.startControllableBridgeSessions(retrieverIn, held)
+	if err != nil {
+		return err
 	}
-	if pc.HeldOut != nil {
-		pc.HeldOut.Close()
-	}
+
+	waitDialogPair(ctx, retrieverIn, held, &ActiveCall{bridgeStop: stopBridge})
 	return nil
 }
 

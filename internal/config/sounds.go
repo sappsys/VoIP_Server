@@ -8,7 +8,6 @@ import (
 // Default prompt filenames (Asterisk core/extra sounds, English).
 const (
 	defaultSoundsDir        = "assets/sounds"
-	defaultSoundBusy        = "is-curntly-busy.wav"
 	defaultSoundWrongNumber = "you-dialed-wrong-number.wav"
 	defaultSoundConfPIN     = "confbridge-pin.wav"
 	defaultSoundConfPINBad  = "confbridge-pin-bad.wav"
@@ -19,9 +18,6 @@ const (
 func setSoundDefaults(s *SoundsConfig) {
 	if s.Dir == "" {
 		s.Dir = defaultSoundsDir
-	}
-	if s.Busy == "" {
-		s.Busy = defaultSoundBusy
 	}
 	if s.WrongNumber == "" {
 		s.WrongNumber = defaultSoundWrongNumber

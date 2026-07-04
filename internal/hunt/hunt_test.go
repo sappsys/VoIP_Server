@@ -17,7 +17,7 @@ func TestReachableMembers(t *testing.T) {
 	reg := registrar.New("test.local", config.ServerConfig{}, exts, nil)
 	reg.RegisterForTest("102", sip.Uri{User: "102", Host: "127.0.0.1", Port: 5060})
 
-	h := NewHandler(reg, nil, nil)
+	h := NewHandler(reg, nil, nil, 15)
 	members := []string{"101", "102", "103"}
 	var reachable []string
 	for _, m := range members {

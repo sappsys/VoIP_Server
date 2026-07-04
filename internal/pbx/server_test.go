@@ -70,7 +70,7 @@ func TestSetDNDPersists(t *testing.T) {
 	if !srv.exts["101"].DND {
 		t.Fatal("memory not updated")
 	}
-	reloaded, err := config.LoadExtensions(srv.extDir)
+	reloaded, err := config.LoadExtensions(srv.extDir, 0)
 	if err != nil || !reloaded["101"].DND {
 		t.Fatalf("file not persisted: %+v err=%v", reloaded["101"], err)
 	}
