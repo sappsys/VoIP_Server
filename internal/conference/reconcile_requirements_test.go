@@ -16,6 +16,7 @@ import (
 // REQ-CONF-2: exactly one participant → MOH only, no mixer adds.
 // REQ-CONF-3: two or more participants → mixer only, no MOH.
 // REQ-CONF-4: when dropping from 2→1, MOH restarts.
+// REQ-CONF-5: phone hold does not reduce admitted count; no MOH while 2+ admitted.
 
 type mediaEventLog struct {
 	events []string
@@ -86,6 +87,7 @@ func newTestRoom(t *testing.T, log *mediaEventLog) *Room {
 func TestREQ_CONF_OneParticipantStartsMOHOnly(t *testing.T) {
 	log := &mediaEventLog{}
 	room := newTestRoom(t, log)
+	room.count = 1
 
 	room.applyMediaLocked(dummySessions(1), testMOHDir(t), nil)
 
@@ -104,6 +106,7 @@ func TestREQ_CONF_OneParticipantStartsMOHOnly(t *testing.T) {
 func TestREQ_CONF_TwoParticipantsMixerOnlyNoMOH(t *testing.T) {
 	log := &mediaEventLog{}
 	room := newTestRoom(t, log)
+	room.count = 2
 
 	room.applyMediaLocked(dummySessions(2), testMOHDir(t), nil)
 
@@ -121,11 +124,13 @@ func TestREQ_CONF_MOHStopsBeforeMixerOnSecondJoin(t *testing.T) {
 	room := newTestRoom(t, log)
 	mohDir := testMOHDir(t)
 
+	room.count = 1
 	room.applyMediaLocked(dummySessions(1), mohDir, nil)
 	if room.moh == nil {
 		t.Fatal("expected active MOH after first reconcile")
 	}
 
+	room.count = 2
 	room.applyMediaLocked(dummySessions(2), mohDir, nil)
 
 	got := log.joined()
@@ -141,7 +146,9 @@ func TestREQ_CONF_TwoToOneRestartsMOH(t *testing.T) {
 	room := newTestRoom(t, log)
 	mohDir := testMOHDir(t)
 
+	room.count = 2
 	room.applyMediaLocked(dummySessions(2), mohDir, nil)
+	room.count = 1
 	room.applyMediaLocked(dummySessions(1), mohDir, nil)
 
 	got := log.joined()
@@ -151,5 +158,22 @@ func TestREQ_CONF_TwoToOneRestartsMOH(t *testing.T) {
 	}
 	if room.moh == nil {
 		t.Fatal("expected active MOH for lone participant")
+	}
+}
+
+// REQ-CONF-5: phone hold must not drop a room to solo MOH while two are admitted.
+func TestREQ_CONF_TwoAdmittedHoldDoesNotStartMOH(t *testing.T) {
+	log := &mediaEventLog{}
+	room := newTestRoom(t, log)
+	room.count = 2
+
+	room.applyMediaLocked(dummySessions(1), testMOHDir(t), nil)
+
+	got := log.joined()
+	if strings.Contains(got, "moh_start") {
+		t.Fatalf("REQ-CONF-5: must not start MOH with two admitted participants, got %q", got)
+	}
+	if !strings.Contains(got, "mixer_add") {
+		t.Fatalf("REQ-CONF-5: expected mixer refresh with one alive leg, got %q", got)
 	}
 }

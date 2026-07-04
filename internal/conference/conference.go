@@ -98,7 +98,12 @@ func (m *Manager) HandleJoin(ctx context.Context, in *diago.DialogServerSession,
 		}
 	}()
 
-	if err := call.AnswerSession(in); err != nil {
+	mohDir := opts.MOHDir
+	if err := call.AnswerSessionOptions(in, diago.AnswerOptions{
+		OnMediaUpdate: func(_ *diago.DialogMedia) {
+			go room.onParticipantMediaUpdate(in, mohDir, m.log)
+		},
+	}); err != nil {
 		if m.log != nil {
 			m.log.Warn("conference answer failed", "room", conf.Number, "from", in.FromUser(), "error", err)
 		}
@@ -152,6 +157,26 @@ func (r *Room) stopMOHLocked() {
 	}
 }
 
+func (r *Room) onParticipantMediaUpdate(in *diago.DialogServerSession, mohDir string, log *slog.Logger) {
+	if in == nil {
+		return
+	}
+	r.mu.Lock()
+	admitted := false
+	for _, s := range r.sessions {
+		if s == in {
+			admitted = true
+			break
+		}
+	}
+	r.mu.Unlock()
+	if !admitted {
+		return
+	}
+	// Hold/unhold re-INVITEs refresh mixer legs; admitted count stays unchanged.
+	r.reconcile(mohDir, log)
+}
+
 func (r *Room) reconcile(mohDir string, log *slog.Logger) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -159,8 +184,9 @@ func (r *Room) reconcile(mohDir string, log *slog.Logger) {
 	r.applyMediaLocked(alive, mohDir, log)
 }
 
-// applyMediaLocked switches between MOH (1 participant) and mixer (2+).
+// applyMediaLocked switches between MOH (1 admitted participant) and mixer (2+).
 // MOH must be fully stopped before the mixer starts (REQ-CONF-1).
+// Phone hold does not remove a participant — use admitted count, not transient RTP state.
 func (r *Room) applyMediaLocked(alive []*diago.DialogServerSession, mohDir string, log *slog.Logger) {
 	r.stopMOHLocked()
 	r.Mixer.RemoveAll()
@@ -169,10 +195,25 @@ func (r *Room) applyMediaLocked(alive []*diago.DialogServerSession, mohDir strin
 		call.PrepareConferenceLeg(s)
 	}
 
-	switch len(alive) {
-	case 0:
+	admitted := r.count
+	if admitted == 0 {
+		admitted = len(alive)
+	}
+
+	switch {
+	case len(alive) == 0:
 		return
-	case 1:
+	case admitted >= 2:
+		// Two or more admitted participants: mixer only, never MOH (REQ-CONF-5).
+		for _, s := range alive {
+			if err := r.Mixer.Add(s); err != nil && log != nil {
+				log.Warn("conference mixer add failed", "room", r.Number, "error", err)
+			}
+		}
+		if log != nil {
+			log.Info("conference mixer started", "room", r.Number, "participants", len(alive), "admitted", admitted)
+		}
+	case admitted == 1 && len(alive) == 1:
 		if mohDir == "" {
 			return
 		}
@@ -192,15 +233,6 @@ func (r *Room) applyMediaLocked(alive []*diago.DialogServerSession, mohDir strin
 		}
 		if log != nil {
 			log.Info("conference moh started", "room", r.Number, "dir", mohDir)
-		}
-	default:
-		for _, s := range alive {
-			if err := r.Mixer.Add(s); err != nil && log != nil {
-				log.Warn("conference mixer add failed", "room", r.Number, "error", err)
-			}
-		}
-		if log != nil {
-			log.Info("conference mixer started", "room", r.Number, "participants", len(alive))
 		}
 	}
 }

@@ -119,6 +119,12 @@ With two or more participants, audio MUST be mixed (no MOH).
 When a room drops from two participants back to one, MOH MUST restart for the
 remaining participant.
 
+### REQ-CONF-5 — Hold does not trigger conference MOH
+When a participant puts their phone on hold during a conference, they remain
+admitted in the room. With two or more admitted participants, the server MUST NOT
+play Music on Hold to any party; the mixer MUST remain active (or be refreshed on
+hold/unhold media updates).
+
 ---
 
 ## 4. Audio quality
@@ -193,6 +199,7 @@ regress. These are guarded by requirement tests.
 | REQ-CONF-PIN-1 | `requirements_prompt_dtmf_test.go`, `conference/requirements_pin_test.go` | `conference_integration_test.go` (`TestREQ_CONF_PINThenSoloMOH`) |
 | REQ-CONF-PIN-2 | `conference/requirements_pin_test.go` (`TestREQ_CONF_PIN_MaxAttempts`) | `conference_integration_test.go` (`TestREQ_CONF_WrongPINNotAdmitted`) |
 | REQ-CONF-1..4 | `conference/reconcile_requirements_test.go`, `requirements_order_test.go`, `requirements_prepare_conference_test.go` | `conference_integration_test.go` (`TestREQ_CONF_PINThenSoloMOH`, `TestREQ_CONF_TwoParticipantsMixerAudio`, `TestREQ_CONF_DropToOneRestartsMOH`) |
+| REQ-CONF-5 | `conference/reconcile_requirements_test.go` (`TestREQ_CONF_TwoAdmittedHoldDoesNotStartMOH`) | `conference_integration_test.go` (`TestREQ_CONF_HoldDoesNotStartMOH`) |
 | REQ-BRIDGE-1/2/3 | `audiobridge/bridge_requirements_test.go` | — |
 | REQ-BRIDGE-5/6 | `audiobridge/requirements_codec_test.go` | `mixed_codec_integration_test.go` (`TestREQ_BRIDGE_MixedCodecCall`, `TestREQ_BRIDGE_SameCodecPassthrough`) |
 | REQ-AUDIO-LATENCY | `audiobridge/bridge_requirements_test.go`, `audiobridge/requirements_codec_test.go` | `mixed_codec_integration_test.go` (bridge liveness under transcoding/passthrough) |

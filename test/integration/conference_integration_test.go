@@ -168,3 +168,45 @@ func TestREQ_CONF_DropToOneRestartsMOH(t *testing.T) {
 		t.Fatalf("REQ-CONF-4: sole survivor must receive MOH RTP after 2→1: %v", err)
 	}
 }
+
+// REQ-CONF-5: phone hold during a conference must not start MOH or drop participant count.
+func TestREQ_CONF_HoldDoesNotStartMOH(t *testing.T) {
+	pbx := startPBX(t, pbxOptions{
+		Extensions:  map[string]string{"110": "andy", "111": "andy"},
+		Conferences: []confSpec{{Number: "600", PIN: "1234", Max: 8}},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	a := newHandset(t, pbx.Port, "111", "andy")
+	b := newHandset(t, pbx.Port, "110", "andy")
+	a.register()
+	b.register()
+
+	legA := joinConference(t, ctx, a, "1234")
+	defer legA.Close()
+	legB := joinConference(t, ctx, b, "1234")
+	defer legB.Close()
+	if !waitFor(8*time.Second, func() bool { return conferenceParticipants(pbx, "600") >= 2 }) {
+		t.Fatal("need two participants before hold test")
+	}
+
+	holdCtx, holdCancel := context.WithTimeout(ctx, 8*time.Second)
+	if err := legA.Hold(holdCtx); err != nil {
+		holdCancel()
+		t.Fatalf("conference hold re-INVITE failed: %v", err)
+	}
+	holdCancel()
+
+	if !waitFor(3*time.Second, func() bool { return conferenceParticipants(pbx, "600") == 2 }) {
+		t.Fatal("REQ-CONF-5: hold must not remove participant from conference count")
+	}
+
+	time.Sleep(400 * time.Millisecond)
+	readCtx, readCancel := context.WithTimeout(ctx, 8*time.Second)
+	defer readCancel()
+	// Survivor should still receive mixer RTP, not solo MOH tearing down the room.
+	if err := readRTPBytes(readCtx, legB, 320); err != nil {
+		t.Fatalf("REQ-CONF-5: non-holding participant lost RTP after peer hold: %v", err)
+	}
+}

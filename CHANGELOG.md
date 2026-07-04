@@ -8,6 +8,15 @@ an `alpha` prerelease suffix.
 
 ## [Unreleased]
 
+## [v0.1.6alpha] - 2026-07-04
+
+[Release](https://github.com/sappsys/VoIP_Server/releases/tag/v0.1.6alpha)
+
+### Fixed
+
+- Conference hold no longer starts Music on Hold when two or more participants are admitted; held phones remain in the room (REQ-CONF-5)
+- Conference mixer refreshes on hold/unhold media updates without treating hold as a participant leaving
+
 ## [v0.1.5alpha] - 2026-07-04
 
 [Release](https://github.com/sappsys/VoIP_Server/releases/tag/v0.1.5alpha)
