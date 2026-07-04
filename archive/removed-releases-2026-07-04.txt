@@ -1,0 +1,8 @@
+Removed from GitHub on 2026-07-04 before v0.2.0beta public release:
+
+- v0.1.3alpha
+- v0.1.4alpha
+- v0.1.5alpha
+- v0.1.6alpha
+
+Release notes remain in CHANGELOG.md (links marked superseded).

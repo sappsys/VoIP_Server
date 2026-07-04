@@ -16,6 +16,7 @@ directory.xml
 phonebook/
 assets/moh/*
 !assets/moh/.gitkeep
+!assets/moh/README.md
 assets/*.wav
 
 # IDE

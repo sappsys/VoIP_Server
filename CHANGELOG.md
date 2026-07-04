@@ -4,13 +4,35 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with
-an `alpha` prerelease suffix.
+an `alpha` or `beta` prerelease suffix.
 
 ## [Unreleased]
 
+## [v0.2.0beta] - 2026-07-04
+
+[Release](https://github.com/sappsys/VoIP_Server/releases/tag/v0.2.0beta)
+
+First public **beta** release. Supersedes prior alpha tags (`v0.1.3alpha`–`v0.1.6alpha`), which were removed from GitHub.
+
+### Added
+
+- Third-party notices in `LICENSE` (Go modules, vendored diago/MPL-2.0, Asterisk CC BY-SA pointers)
+- `assets/moh/README.md` — MOH is user-supplied; not published in the repo
+
+### Changed
+
+- Public-repo licensing: hold music and unclear third-party audio are not bundled; Asterisk English prompts remain with bundled LICENSE/CREDITS files
+- Deploy installs root `LICENSE` and MOH README alongside assets
+
+### Included from prior alpha work
+
+- Go SIP PBX with hold/MOH, PCM bridge, conferences, hunt groups, web admin, integration tests (`REQUIREMENTS.md`)
+- Conference hold no longer triggers solo MOH when two+ participants are admitted (REQ-CONF-5)
+- Phone-initiated hold with dial tone + MOH on first press; unhold codec/bridge fixes
+
 ## [v0.1.6alpha] - 2026-07-04
 
-[Release](https://github.com/sappsys/VoIP_Server/releases/tag/v0.1.6alpha)
+(Superseded by v0.2.0beta — release removed from GitHub.)
 
 ### Fixed
 

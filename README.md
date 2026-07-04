@@ -1,6 +1,6 @@
 # VoIP PBX Server
 
-**Version: v0.1.5alpha** — see [CHANGELOG.md](CHANGELOG.md) for release history.
+**Version: v0.2.0beta** — see [CHANGELOG.md](CHANGELOG.md) for release history.
 
 Go SIP PBX using [sipgo](https://github.com/emiago/sipgo) and [diago](https://github.com/emiago/diago).
 
@@ -45,7 +45,7 @@ platform in `bin/` and creates a `./voip-server` symlink pointing at it.
 | SIP | UDP `0.0.0.0:5060` |
 | Web UI | `http://localhost:7030` |
 
-Place WAV files in the MOH directory (`assets/moh` by default). Tracks play in alphanumeric filename order and loop. Use 8 kHz mono WAV for best phone compatibility.
+Music on hold is **not bundled** in this repo. After install, add your own royalty-cleared `.wav` files under `assets/moh/` (see [assets/moh/README.md](assets/moh/README.md)). Tracks play in alphanumeric filename order and loop. Use 8 kHz mono WAV for best phone compatibility.
 
 ## Numbering plan
 
@@ -235,3 +235,15 @@ sudo ./deploy/deploy.sh update       # quick binary-only upgrade
 
 Install options: `--no-build`, `--binary PATH`, `--no-start`, `--install-dir PATH`.
 See `./deploy/deploy.sh --help`.
+
+## Third-party credits
+
+VoIP Server uses and depends on third-party open source software and audio assets:
+
+- SIP/media: [sipgo](https://github.com/emiago/sipgo), [diago](https://github.com/emiago/diago) (vendored under `third_party/diago`), Pion RTP/RTCP/STUN/DTLS/SRTP modules, and Go `x/*` modules.
+- Codecs/audio/config/storage: BurntSushi TOML, goertzel, G.711, G.722, G.726, G.729, MP3 decoding, Opus bindings, and modernc SQLite/libc support libraries.
+- WebSocket/HTTP/support utilities: gobwas modules, Google UUID, digest auth, humanize, errors, anet, and related transitive Go modules listed in `go.mod` / `go.sum`.
+- Bundled Asterisk English sound prompts are credited in `assets/sounds/CREDITS-*` and licensed under CC BY-SA in the bundled `assets/sounds/LICENSE-*` files.
+- Music on hold is **not** included in the repository; supply your own WAV files locally (see `assets/moh/README.md`).
+
+See `LICENSE` for third-party Go module notices and audio licensing pointers.

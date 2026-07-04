@@ -194,6 +194,15 @@ install_tree() {
 		fi
 	fi
 
+	if [ -f "$REPO_ROOT/LICENSE" ]; then
+		log "installing LICENSE"
+		install -m 0644 "$REPO_ROOT/LICENSE" "$INSTALL_DIR/LICENSE"
+	fi
+
+	if [ -f "$REPO_ROOT/assets/moh/README.md" ]; then
+		install -m 0644 "$REPO_ROOT/assets/moh/README.md" "$INSTALL_DIR/assets/moh/README.md"
+	fi
+
 	if [ -f "$REPO_ROOT/assets/moh/moh.wav" ]; then
 		log "installing assets/moh/moh.wav"
 		install -m 0644 "$REPO_ROOT/assets/moh/moh.wav" "$INSTALL_DIR/assets/moh/moh.wav"

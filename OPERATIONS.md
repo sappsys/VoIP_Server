@@ -69,7 +69,7 @@ Dial `*<code>` where code is 80–99 (configured in web UI → Paging). Default 
 
 - Set PBX `external_host` in `config.toml` to the IP phones use to reach the server.
 - Open UDP 5060 (SIP) and RTP range on the firewall.
-- Place `.wav` files in the MOH directory (`assets/moh` by default); they play in alphanumeric order.
+- Place your own royalty-cleared `.wav` files in the MOH directory (`assets/moh` by default); they play in alphanumeric order. MOH is not bundled in the public repo — see `assets/moh/README.md`.
 
 ---
 
@@ -109,7 +109,7 @@ Configured in `config.toml` under `[media] codecs` (preference order). Defaults 
 |---------|--------|
 | Phone won’t register | Extension exists, `enabled = true`, password matches, UDP 5060 reachable |
 | One-way audio | Set `external_host`; verify RTP/firewall |
-| No hold music | MOH directory exists with `.wav` files; `moh_dir` in `config.toml` |
+| No hold music | MOH directory exists with your own `.wav` files; `moh_dir` in `config.toml` (not bundled in repo) |
 | Redial / return empty | At least one prior call to populate SQLite history |
 | Park retrieve fails | Slot = parker’s extension; dial `*86` + that number |
 | DND still rings phone | Confirm `*78` saved (`dnd = true` in extension TOML); reload extensions |
